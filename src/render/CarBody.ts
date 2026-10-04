@@ -117,13 +117,6 @@ export function buildBody(M: Mats, B: Binder): BodyParts {
   bonnetPivot.add(bonnetInner);
   const bonnetSkin = reg(bonnetLoft.patch(2.235, 0.6, 0, 1, M.paint));
   bonnetInner.add(bonnetSkin);
-  // inner wheel-arch liners and splash panels
-  for (const s of [1, -1]) {
-    const liner = new THREE.Mesh(new THREE.CylinderGeometry(ARCH_R + 0.01, ARCH_R + 0.01, 0.34, 28, 1, true, Math.PI - 1.25, 2.5), M.underside);
-    liner.rotation.x = Math.PI / 2; liner.position.set(AXLE_F, WHEEL_R, s * 0.62);
-    liner.rotation.z = 0;
-    bonnetInner.add(liner);
-  }
   // Mouth: chrome surround, dark grille, bar, badge
   {
     const sec = bonnetLoft.secs[0];
@@ -136,14 +129,15 @@ export function buildBody(M: Mats, B: Binder): BodyParts {
     const ring = tube(ringPts, 0.009, M.chrome, 120, 8, false);
     const bar = box(0.012, 0.012, 0.44, M.chrome, x0 - 0.01, 0.39, 0, 0.004);
     const badge = cyl(0.03, 0.01, M.chrome, 'x', 24); badge.position.set(x0 - 0.002, 0.39, 0);
-    const duct = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.26, 0.6, 24, 1, true), M.black);
-    duct.rotation.z = Math.PI / 2; duct.scale.set(1, 1, 0.5); duct.position.set(x0 - 0.33, 0.38, 0);
+    // Intake duct behind the mouth: vertical radius ~0.085 m, lateral ~0.2 m (scale x → vertical after rotation)
+    const duct = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.1, 0.5, 24, 1, true), M.black);
+    duct.rotation.z = Math.PI / 2; duct.scale.set(0.085, 1, 0.2); duct.position.set(x0 - 0.26, 0.38, 0);
     const m = group(grille, ring, bar, badge, duct);
     bonnetInner.add(m);
     B.bind('body.mouth', m);
   }
   // Undertray
-  bonnetInner.add(box(0.45, 0.006, 0.42, M.underside, 1.85, 0.235, 0));
+  bonnetInner.add(box(0.36, 0.006, 0.36, M.underside, 1.82, 0.25, 0));
   // Headlamps, sidelamps
   for (const [sd, s] of [['R', 1], ['L', -1]] as const) {
     const x = 1.96;
@@ -304,14 +298,17 @@ export function buildBody(M: Mats, B: Binder): BodyParts {
     root.add(script);
   }
   // Rear bumpers, tail lamps
+  const sideZ = (x: number, y: number) => {
+    const sec = tubHalf(x);
+    let best = sec[0];
+    for (const q of sec) if (Math.abs(q.y - y) < Math.abs(best.y - y)) best = q;
+    return best.z;
+  };
   for (const [sd, s] of [['R', 1], ['L', -1]] as const) {
-    const pts: THREE.Vector3[] = [];
-    for (let k = 0; k <= 10; k++) {
-      const a = (k / 10) * 1.2;
-      pts.push(V(-2.17 + Math.sin(a) * 0.36 - 0.04, 0.4, s * (0.18 + (1 - Math.cos(a)) * 0.2 + k * 0.026)));
-    }
-    const bump = tube(pts, 0.021, M.chrome, 40, 12);
-    bump.scale.y = 0.75; bump.position.y = 0.1;
+    const BY = 0.43;
+    const pts: THREE.Vector3[] = [V(-2.262, BY, s * 0.16), V(-2.258, BY, s * 0.3)];
+    for (const x of [-2.215, -2.17, -2.1, -2.02, -1.95]) pts.push(V(x, BY, s * (sideZ(x, BY) + 0.022)));
+    const bump = tube(pts, 0.02, M.chrome, 40, 12);
     root.add(bump);
     B.bind(`body.bumper_R${sd}`, bump);
     const lamp = group(new THREE.Mesh(roundedBox(0.09, 0.05, 0.08, 0.02), M.red));

@@ -137,7 +137,7 @@ export function buildWorkshop(M: Mats): WorkshopParts {
   engineStand.position.set(-2.4, 0, 3.8);
   root.add(engineStand);
   const washer = group(box(0.9, 0.9, 0.6, new THREE.MeshStandardMaterial({ color: 0x2a5a8a, metalness: 0.4, roughness: 0.5 }), 0, 0.45, 0, 0.03));
-  washer.position.set(-0.6, 0, 4.5);
+  washer.position.set(2.4, 0, 4.6);
   root.add(washer);
   // Workshop sign
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.5), new THREE.MeshStandardMaterial({ map: TEX.text('COUGAR TYPE E SPECIALISTS', 1024, 160, 'bold 74px Georgia', '#e9e0c9', '#1d3a2c'), roughness: 0.6 }));

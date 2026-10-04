@@ -24,9 +24,9 @@ async function boot() {
   try { const s = await storage.load('autosave'); if (s) game.state = s; } catch (e) { console.warn('autosave unreadable', e); }
   const cam = new CameraController(canvas, window.innerWidth / window.innerHeight);
   const R = new Renderer(canvas, cam.camera, game.state.settings.quality);
-  const ws = buildWorkshop(new CarModel(game.state.settings.paint).M);
-  R.scene.add(ws.root);
   const car = new CarModel(game.state.settings.paint);
+  const ws = buildWorkshop(car.M);
+  R.scene.add(ws.root);
   R.scene.add(car.root);
   const eq = new Equipment(car.M, car);
   R.scene.add(eq.root);
