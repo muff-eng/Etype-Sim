@@ -95,7 +95,7 @@ export function buildEngine(M: Mats, B: Binder): EngineParts {
   coverIn.add(capLabel);
   // Oil filler cap (front of inlet cover)
   const filler = group(cyl(0.028, 0.03, M.polished, 'y', 24), at(cyl(0.031, 0.008, M.polished, 'y', 30), 0, 0.016, 0));
-  filler.position.set(0.26, 0.462, 0.083);
+  filler.position.set(0.26, 0.455, 0.083);
   root.add(ex(filler, 0, 0.75, 0.05));
   B.bind('lub.filler_cap', filler, { axis: V(0, 1, 0), pitch: 0.01, spin: true });
 
