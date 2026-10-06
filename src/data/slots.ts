@@ -8,7 +8,7 @@ import type { ToolKind } from './tools';
 import { PARTS, definePart } from './parts';
 import { TORQUE } from './spec';
 
-export type StateKey = 'doorOpenL' | 'doorOpenR' | 'hatchOpen' | 'panelOpen' | 'engineOff' | 'engineCold' | 'bootFloorOpen';
+export type StateKey = 'doorOpenL' | 'doorOpenR' | 'hatchOpen' | 'panelOpen' | 'engineOff' | 'engineCold' | 'bootFloorOpen' | 'engineOnStand' | 'coolantLow';
 
 export type AccessReq =
   | { type: 'bonnetOpen' }
@@ -68,7 +68,10 @@ function comp(id: string, name: string, system: SystemId, group: string, o: Part
   return def({ id, name, system, group, accepts: [pid], initial: pid, removable: false, ...rest });
 }
 
-const PH3 = { type: 'phase', phase: 3, label: 'Engine strip-down — Tier II (Phase 3)' } as const;
+const PH3 = { type: 'phase', phase: 4, label: 'Valvetrain & ancillary strip-down — Phase 4' } as const;
+const STAND = { type: 'state', key: 'engineOnStand', label: 'Lift the engine out and mount it on the engine stand' } as const;
+const COLD = { type: 'state', key: 'engineCold', label: 'Let the engine cool below 50 °C' } as const;
+const DRAINED = { type: 'state', key: 'coolantLow', label: 'Drain the coolant first (radiator drain tap)' } as const;
 const PH4 = { type: 'phase', phase: 4, label: 'Chassis rebuild — Phase 4' } as const;
 const UNDER_F = { type: 'under', end: 'front' } as const;
 const UNDER_R = { type: 'under', end: 'rear' } as const;
@@ -134,33 +137,78 @@ comp('int.center_panel', 'Centre instrument panel (hinges down for fuse access)'
 
 // ═══════════════════════ ENGINE (structure / internals) ═══════════════════════
 comp('eng.block', 'Cylinder block (cast iron)', 'engine', 'Engine structure', { price: 2600, mass: 95, access: [BONNET], edu: 'block' });
-comp('eng.head', 'Cylinder head (aluminium, hemispherical)', 'engine', 'Engine structure', { price: 2400, mass: 22, access: [BONNET, PH3], edu: 'cylinder_head' });
-comp('eng.head_gasket', 'Cylinder head gasket (composite)', 'engine', 'Engine structure', { price: 45, mass: 0.4, access: [BONNET, PH3], edu: 'head_gasket' });
-comp('eng.cam_cover_in', 'Camshaft cover — inlet (polished, ribbed)', 'engine', 'Engine structure', { price: 380, mass: 2.5, access: [BONNET, PH3], edu: 'cam_cover' });
-comp('eng.cam_cover_ex', 'Camshaft cover — exhaust (polished, ribbed)', 'engine', 'Engine structure', { price: 380, mass: 2.5, access: [BONNET, PH3], edu: 'cam_cover' });
+definePart({ id: 'head_gasket', name: 'Cylinder head gasket (composite)', system: 'engine', mass: 0.4, price: 45, kind: 'consumable', catalog: true, edu: 'head_gasket',
+  inspect: (p) => [p.flags.includes('damaged') ? 'Fire ring burnt through between cylinders 3 and 4; brown coolant staining across the land.' : p.flags.includes('crushed') ? 'Compressed and imprinted — a head gasket is single-use.' : 'New gasket, unmarked.'] });
+for (const side of ['in', 'ex'] as const) {
+  def({ id: `eng.cover_nuts_${side}`, name: `Camshaft cover domed nuts — ${side === 'in' ? 'inlet' : 'exhaust'} (set of 14)`, system: 'engine', group: 'Head fasteners', accepts: ['p.cover_nuts'], initial: 'p.cover_nuts',
+    access: [BONNET], thread: { size: '1/4 UNF', drive: 'hex', driveSize: '7/16 AF', turns: 5, torqueKey: 'camCover', host: 'aluminium', stripFactor: 2.6, stiffness: 0.15 } });
+  def({ id: `eng.cam_cover_${side}`, name: `Camshaft cover — ${side === 'in' ? 'inlet' : 'exhaust'} (polished, ribbed)`, system: 'engine', group: 'Engine structure', accepts: [`p.eng.cam_cover_${side}`], initial: `p.eng.cam_cover_${side}`,
+    heldBy: [`eng.cover_nuts_${side}`, ...(side === 'in' ? ['lub.filler_cap'] : [])], access: [BONNET], edu: 'cam_cover' });
+  definePart({ id: `p.eng.cam_cover_${side}`, name: `Camshaft cover — ${side === 'in' ? 'inlet' : 'exhaust'}`, system: 'engine', mass: 2.5, price: 380, kind: 'component', edu: 'cam_cover' });
+}
+definePart({ id: 'p.cover_nuts', name: 'Cam cover domed nuts & washers (set)', system: 'engine', mass: 0.15, price: 28, kind: 'fastener' });
+def({ id: 'eng.head', name: 'Cylinder head (aluminium, hemispherical)', system: 'engine', group: 'Engine structure', accepts: ['p.eng.head'], initial: 'p.eng.head', heavy: true,
+  heldBy: [...Array.from({ length: 14 }, (_, i) => `eng.head_nut_${i + 1}`), 'eng.conn_top_hose', 'ign.lead_1', 'ign.lead_2', 'ign.lead_3', 'ign.lead_4', 'ign.lead_5', 'ign.lead_6'],
+  access: [BONNET, COLD, DRAINED, { type: 'removed', slot: 'eng.cam_cover_in' }, { type: 'removed', slot: 'eng.cam_cover_ex' }], edu: 'cylinder_head',
+  hint: 'Undo the head nuts in the reverse of the tightening sequence — outside in.' });
+definePart({ id: 'p.eng.head', name: 'Cylinder head assembly', system: 'engine', mass: 22, price: 2400, kind: 'component', edu: 'cylinder_head' });
+def({ id: 'eng.head_gasket', name: 'Cylinder head gasket', system: 'engine', group: 'Engine structure', accepts: ['head_gasket'], initial: 'head_gasket',
+  access: [{ type: 'removed', slot: 'eng.head' }], edu: 'head_gasket', hint: 'Always fit a new gasket; clean both faces first.' });
 comp('eng.camshaft_in', 'Inlet camshaft', 'engine', 'Valvetrain', { price: 420, mass: 5, access: [PH3], edu: 'camshaft' });
 comp('eng.camshaft_ex', 'Exhaust camshaft', 'engine', 'Valvetrain', { price: 420, mass: 5, access: [PH3], edu: 'camshaft' });
 comp('eng.timing_chain', 'Duplex timing chains (two-stage) & tensioner', 'engine', 'Valvetrain', { price: 160, mass: 1.5, access: [PH3], edu: 'timing_chain' });
 comp('eng.timing_cover', 'Timing cover', 'engine', 'Engine structure', { price: 260, mass: 4, access: [BONNET, PH3] });
-comp('eng.sump', 'Sump (cast aluminium)', 'lubrication', 'Engine structure', { price: 650, mass: 9, access: [UNDER_F, PH3], edu: 'sump' });
-comp('eng.oil_pump', 'Oil pump (eccentric rotor)', 'lubrication', 'Lubrication', { price: 210, mass: 2, access: [PH3], edu: 'oil_pump' });
-comp('eng.oil_pickup', 'Oil pick-up & strainer', 'lubrication', 'Lubrication', { price: 70, mass: 0.6, access: [PH3] });
+def({ id: 'eng.sump_bolts', name: 'Sump bolts (set of 26)', system: 'lubrication', group: 'Bottom end', accepts: ['p.sump_bolts'], initial: 'p.sump_bolts', access: [STAND],
+  thread: { size: '5/16 UNC', drive: 'hex', driveSize: '1/2 AF', turns: 8, torqueKey: 'sumpBolts', host: 'aluminium', stripFactor: 2.3, stiffness: 0.25 } });
+definePart({ id: 'p.sump_bolts', name: 'Sump bolts & washers (set)', system: 'lubrication', mass: 0.4, price: 18, kind: 'fastener' });
+comp('eng.sump', 'Sump (cast aluminium)', 'lubrication', 'Bottom end', { price: 650, mass: 9, access: [STAND], heldBy: ['eng.sump_bolts'], removable: true, edu: 'sump' });
+comp('eng.oil_pump', 'Oil pump (eccentric rotor)', 'lubrication', 'Bottom end', { price: 210, mass: 2, access: [STAND, { type: 'removed', slot: 'eng.sump' }], removable: true, edu: 'oil_pump' });
+comp('eng.oil_pickup', 'Oil pick-up & strainer', 'lubrication', 'Bottom end', { price: 70, mass: 0.6, access: [STAND, { type: 'removed', slot: 'eng.sump' }], removable: true });
 comp('eng.damper', 'Crankshaft damper & pulley', 'engine', 'Engine structure', { price: 240, mass: 4, access: [BONNET, PH3] });
 comp('eng.flywheel', 'Flywheel', 'engine', 'Engine structure', { price: 380, mass: 14, access: [PH3] });
+def({ id: 'eng.mount_bolts', name: 'Engine mounting bolts (front, both sides)', system: 'engine', group: 'Engine connections', accepts: ['p.mount_bolts'], initial: 'p.mount_bolts', access: [UNDER_F],
+  thread: { size: '3/8 UNF', drive: 'hex', driveSize: '9/16 AF', turns: 7, torqueKey: 'engineMount', host: 'steel', captive: true, releaseTurns: 4, stiffness: 0.35 }, edu: 'engine_mount' });
+definePart({ id: 'p.mount_bolts', name: 'Engine mounting bolts', system: 'engine', mass: 0.2, price: 9, kind: 'fastener' });
 comp('eng.mount_L', 'Engine mounting — left', 'engine', 'Engine structure', { price: 38, mass: 0.8, access: [BONNET, PH3], edu: 'engine_mount' });
 comp('eng.mount_R', 'Engine mounting — right', 'engine', 'Engine structure', { price: 38, mass: 0.8, access: [BONNET, PH3], edu: 'engine_mount' });
 comp('eng.breather', 'Engine breather', 'engine', 'Engine structure', { price: 40, mass: 0.4, access: [BONNET] });
-def({ id: 'eng.crankshaft', name: 'Crankshaft', system: 'engine', group: 'Bottom end', accepts: ['crankshaft'], initial: 'crankshaft', removable: false, access: [PH3], edu: 'crankshaft' });
+const RODS_OFF = [1, 2, 3, 4, 5, 6].map((c) => ({ type: 'removed', slot: `eng.rod_nuts_${c}` }) as const);
+def({ id: 'eng.main_bolts', name: 'Main bearing cap bolts (set of 14)', system: 'engine', group: 'Bottom end', accepts: ['p.main_bolts'], initial: 'p.main_bolts',
+  access: [STAND, { type: 'removed', slot: 'eng.sump' }, { type: 'removed', slot: 'eng.oil_pump' }],
+  thread: { size: '1/2 UNF', drive: 'hex', driveSize: '3/4 AF', turns: 12, torqueKey: 'mainBearing', host: 'iron', stripFactor: 1.9, stiffness: 1.4 }, edu: 'crankshaft' });
+definePart({ id: 'p.main_bolts', name: 'Main bearing cap bolts (set)', system: 'engine', mass: 0.8, price: 42, kind: 'fastener' });
+def({ id: 'eng.crankshaft', name: 'Crankshaft', system: 'engine', group: 'Bottom end', accepts: ['crankshaft'], initial: 'crankshaft', heavy: true,
+  heldBy: ['eng.main_bolts'], access: [STAND, { type: 'removed', slot: 'eng.sump' }, ...RODS_OFF], edu: 'crankshaft' });
+def({ id: 'eng.main_bearings', name: 'Main bearing shells (7 pairs)', system: 'engine', group: 'Bottom end', accepts: ['main_bearings_std', 'main_bearings_010', 'main_bearings_020'], initial: 'main_bearings_std',
+  access: [STAND, { type: 'removed', slot: 'eng.crankshaft' }], edu: 'crankshaft', hint: 'Shell undersize must match the crankshaft: a reground crank needs undersize shells.' });
+def({ id: 'eng.rod_bearings', name: 'Big-end bearing shells (6 pairs)', system: 'engine', group: 'Bottom end', accepts: ['rod_bearings_std', 'rod_bearings_010', 'rod_bearings_020'], initial: 'rod_bearings_std',
+  access: [STAND, { type: 'removed', slot: 'eng.sump' }, ...RODS_OFF], edu: 'conrod' });
 for (let c = 1; c <= 6; c++) {
-  def({ id: `eng.piston_${c}`, name: `Piston & rings — cylinder ${c}`, system: 'engine', group: 'Bottom end', accepts: ['piston'], initial: 'piston', removable: false, access: [PH3], edu: 'piston' });
-  def({ id: `eng.conrod_${c}`, name: `Connecting rod — cylinder ${c}`, system: 'engine', group: 'Bottom end', accepts: ['conrod'], initial: 'conrod', removable: false, access: [PH3], edu: 'conrod' });
+  def({ id: `eng.rod_nuts_${c}`, name: `Big-end cap nuts — cylinder ${c}`, system: 'engine', group: 'Bottom end', accepts: ['p.rod_nuts'], initial: 'p.rod_nuts',
+    access: [STAND, { type: 'removed', slot: 'eng.sump' }, { type: 'removed', slot: 'eng.oil_pump' }],
+    thread: { size: '3/8 UNF', drive: 'hex', driveSize: '9/16 AF', turns: 7, torqueKey: 'conrod', host: 'steel', stripFactor: 2.1, stiffness: 0.8 }, edu: 'conrod' });
+  def({ id: `eng.piston_${c}`, name: `Piston & rings — cylinder ${c}`, system: 'engine', group: 'Bottom end', accepts: ['piston'], initial: 'piston',
+    access: [STAND, { type: 'removed', slot: 'eng.head' }, { type: 'removed', slot: `eng.rod_nuts_${c}` }], removable: true, edu: 'piston' });
+  def({ id: `eng.conrod_${c}`, name: `Connecting rod — cylinder ${c}`, system: 'engine', group: 'Bottom end', accepts: ['conrod'], initial: 'conrod',
+    access: [STAND, { type: 'removed', slot: 'eng.head' }, { type: 'removed', slot: `eng.rod_nuts_${c}` }], removable: true, edu: 'conrod' });
   comp(`eng.valve_in_${c}`, `Inlet valve, spring & retainer — cyl ${c}`, 'engine', 'Valvetrain', { price: 45, mass: 0.15, access: [PH3], edu: 'valve' });
   comp(`eng.valve_ex_${c}`, `Exhaust valve, spring & retainer — cyl ${c}`, 'engine', 'Valvetrain', { price: 48, mass: 0.15, access: [PH3], edu: 'valve' });
 }
+definePart({ id: 'p.rod_nuts', name: 'Big-end nuts (pair)', system: 'engine', mass: 0.04, price: 6, kind: 'fastener', catalog: true });
+// Everything that ties the engine/gearbox unit to the car. All must be disconnected before the hoist can lift it.
+const CONN: [string, string, 'b' | 'u'][] = [
+  ['fuel', 'Fuel feed hose to the float chambers', 'b'], ['throttle', 'Throttle linkage', 'b'], ['choke', 'Cold-start cable', 'b'],
+  ['coil', 'Coil HT & distributor LT leads', 'b'], ['alt', 'Alternator harness plug', 'b'], ['senders', 'Oil-pressure & temperature sender wires', 'b'],
+  ['heater', 'Heater hoses', 'b'], ['top_hose', 'Top hose at thermostat housing', 'b'], ['bottom_hose', 'Bottom hose at water pump', 'b'], ['earth', 'Engine earth strap', 'b'],
+  ['starter', 'Starter main cable & solenoid wire', 'u'], ['exhaust', 'Exhaust down-pipe flanges', 'u'], ['prop', 'Propshaft flange at gearbox', 'u'],
+  ['clutch', 'Clutch slave cylinder', 'u'], ['speedo', 'Speedometer cable', 'u'], ['gear', 'Gear lever & remote housing', 'u'],
+];
+export const ENGINE_CONNECTIONS = CONN.map(([k]) => `eng.conn_${k}`);
+for (const [k, name, w] of CONN) comp(`eng.conn_${k}`, name, 'engine', 'Engine connections', { price: 10, mass: 0.2, connector: true, access: [w === 'b' ? BONNET : UNDER_F] });
 definePart({ id: 'p.head_nut', name: 'Cylinder head nut (domed, 7/16 UNF)', system: 'engine', mass: 0.05, price: 3, kind: 'fastener' });
 for (let n = 1; n <= 14; n++) {
   def({ id: `eng.head_nut_${n}`, name: `Cylinder head nut #${n}`, system: 'engine', group: 'Head fasteners', accepts: ['p.head_nut'], initial: 'p.head_nut',
-    access: [BONNET, PH3], thread: { size: '7/16 UNF', drive: 'hex', driveSize: '3/4 AF', turns: 10, torqueKey: 'headNuts', host: 'steel', stiffness: 1.1 } });
+    access: [BONNET, COLD, { type: 'removed', slot: n <= 7 ? 'eng.cam_cover_in' : 'eng.cam_cover_ex' }], thread: { size: '7/16 UNF', drive: 'hex', driveSize: '3/4 AF', turns: 10, torqueKey: 'headNuts', host: 'steel', stiffness: 1.1 } });
 }
 
 // ═══════════════════════ LUBRICATION (service) ═══════════════════════
@@ -205,7 +253,7 @@ def({ id: 'fuel.air_element', name: 'Air cleaner element', system: 'fuel', group
 comp('fuel.tank', 'Fuel tank (14 gal) & immersed pump', 'fuel', 'Fuel & induction', { price: 520, mass: 12, edu: 'fuel_pump' });
 
 // ═══════════════════════ COOLING ═══════════════════════
-comp('cool.radiator', 'Radiator (cross-flow)', 'cooling', 'Cooling', { price: 420, mass: 8, access: [BONNET], edu: 'radiator' });
+comp('cool.radiator', 'Radiator (cross-flow) & drain tap', 'cooling', 'Cooling', { price: 420, mass: 8, access: [BONNET], edu: 'radiator', toggle: { var: 'tap', on: 'Open drain tap (coolant runs out)', off: 'Close drain tap', label: 'Drain tap' } });
 comp('cool.header_tank', 'Header tank', 'cooling', 'Cooling', { price: 160, mass: 1.2, access: [BONNET], edu: 'pressure_cap' });
 def({ id: 'cool.header_cap', name: 'Header tank pressure cap', system: 'cooling', group: 'Cooling', accepts: ['header_cap'], initial: 'header_cap', access: [BONNET], edu: 'pressure_cap',
   thread: { size: 'bayonet', drive: 'hand', turns: 0.5, host: 'brass', handTight: true, torqueKey: 'panelScrew' }, hint: 'NEVER open when hot — pressurised coolant above 100 °C.' });

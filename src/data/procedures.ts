@@ -9,6 +9,8 @@ import { torqueVerdict } from '../sim/threads';
 import { POINTS, poseFn } from './layout';
 import { total } from './fluids';
 import type { Corner } from '../sim/types';
+import { ENGINE_CONNECTIONS } from './slots';
+import { connected } from '../sim/vehicle';
 import { CORNERS } from '../sim/types';
 
 export interface ProcCtx { v: VehicleState; ws: WorkshopState; m: Set<string> }
@@ -150,6 +152,65 @@ export const PROCEDURES: Record<string, ProcedureDef> = {
       { id: 'spinner_on', text: 'Run the spinner on by hand, snug it with the mallet', why: '', check: (c) => (c.v.slots['whl.spinner_FL'].turnsIn ?? 0) >= 4.95 },
       { id: 'lower', text: 'Lower the car and finish tightening the spinner on the ground', why: 'Spinners are self-tightening in the direction of rotation, but must start tight.', check: (c) => !wheelOffGround(c.v, 'FL') && torqueVerdict(c.v, 'whl.spinner_FL') === 'correct' },
       { id: 'pressures', text: 'Set all four tyres to 32 psi', why: 'Unequal pressures make the car pull and wear unevenly.', check: (c) => CORNERS.every((k) => Math.abs((partIn(c.v, `whl.${k}`)?.vars.pressure ?? 0) - 32) <= 1) },
+    ],
+  },
+  head_gasket: {
+    id: 'head_gasket', title: 'Cylinder head gasket renewal', system: 'Engine', time: '≈ 6–7 h',
+    tools: ['3/4 AF socket & breaker bar', '7/16 AF socket', 'Torque wrench 150 Nm', 'Compression tester', 'Drain pan'],
+    parts: ['Head gasket', 'Coolant (≈ 18 L premix)'],
+    steps: [
+      { id: 'bonnet', text: 'Open the bonnet', why: '', check: (c) => bonnetOpen(c.v) },
+      { id: 'evidence', text: 'Gather evidence: compression test, exhaust smoke, coolant level', why: 'White sweet smoke + coolant loss + two adjacent low cylinders is the classic gasket signature.', check: (c) => c.m.has('compression') && (c.m.has('exhaust.smoke') || c.m.has('coolant.level')) },
+      { id: 'cold', text: 'Let the engine cool completely', why: 'Never remove an aluminium head hot — it can warp.', check: (c) => c.v.engine.coolantC < 50 },
+      { id: 'drain', text: 'Open the radiator drain tap into the pan until empty; close it', why: 'Lifting the head with coolant in the block floods the cylinders.', check: (c) => total(c.v.coolant.comp) < 1.0 || c.m.has('head_off') },
+      { id: 'disc', text: 'Disconnect the top hose and all six HT leads', why: '', check: (c) => !connected(c.v, 'eng.conn_top_hose') || c.m.has('head_off') },
+      { id: 'covers', text: 'Remove both camshaft covers (domed nuts, 7/16 AF)', why: '', check: (c) => (!c.v.slots['eng.cam_cover_in'].part && !c.v.slots['eng.cam_cover_ex'].part) || c.m.has('head_off') },
+      { id: 'nuts', text: 'Undo the 14 head nuts — outside first, working inwards', why: 'Releasing in the reverse of the tightening sequence avoids distorting the head.', check: (c) => Array.from({ length: 14 }, (_, i) => c.v.slots[`eng.head_nut_${i + 1}`].part).every((p) => !p) || c.m.has('head_off') },
+      { id: 'lift', text: 'Lift the head off and remove the old gasket; inspect it', why: 'The gasket tells you where it failed — and why.', check: (c) => c.m.has('head_off') && !c.v.slots['eng.head_gasket'].part },
+      { id: 'newgasket', text: 'Fit a NEW gasket (never reuse) and lower the head on', why: 'A gasket seals by crushing once.', check: (c) => { const g = partIn(c.v, 'eng.head_gasket'); return !!g && g.origin === 'new' && !!c.v.slots['eng.head'].part; } },
+      { id: 'torque', text: 'Run the nuts down by hand, then torque to 73 Nm (54 lb ft) from the centre outwards', why: 'Spiral sequence from the centre clamps the gasket evenly.', check: (c) => Array.from({ length: 14 }, (_, i) => torqueVerdict(c.v, `eng.head_nut_${i + 1}`)).every((x) => x === 'correct') },
+      { id: 'reassemble', text: 'Refit cam covers (7 Nm), top hose and HT leads in firing order', why: '', check: (c) => ['eng.cover_nuts_in', 'eng.cover_nuts_ex'].every((k) => torqueVerdict(c.v, k) === 'correct') && connected(c.v, 'eng.conn_top_hose') && [1, 2, 3, 4, 5, 6].every((n) => connected(c.v, `ign.lead_${n}`)) },
+      { id: 'refill', text: 'Close the drain tap and refill with 50 % IAT coolant', why: '', check: (c) => total(c.v.coolant.comp) / COOLANT_FULL > 0.93 && (c.v.slots['cool.radiator'].vars.tap ?? 0) < 0.5 },
+      { id: 'test', text: 'Run to temperature: smooth idle, clear exhaust, level holds', why: 'Re-check the coolant once cold.', check: (c) => c.m.has('hot_run') },
+      CLOSE_BONNET,
+    ],
+  },
+  engine_removal: {
+    id: 'engine_removal', title: 'Engine & gearbox removal', system: 'Engine', time: '≈ 5 h',
+    tools: ['Engine hoist', 'Engine stand', 'Drain pan', 'Spanners & sockets', 'Trolley jack & stands'],
+    parts: [],
+    steps: [
+      { id: 'tools', text: 'Buy an engine hoist and engine stand (Tools, T)', why: 'The engine/gearbox unit weighs ≈ 270 kg.', check: (c) => c.m.has('owns_hoist') || c.v.engineLoc !== 'car' },
+      { id: 'bonnet', text: 'Open the bonnet', why: '', check: (c) => bonnetOpen(c.v) || c.v.engineLoc !== 'car' },
+      { id: 'battery', text: 'Disconnect the battery earth terminal', why: 'Live starter cables while lifting an engine are a fire risk.', check: (c) => (c.v.slots['elec.term_neg'].vars.off ?? 0) > 0.5 || c.v.engineLoc !== 'car' },
+      { id: 'oil', text: 'Drain the engine oil', why: 'The engine tilts nose-up on the hoist.', check: (c) => sumpOil(c.v) < 0.6 || c.v.engineLoc !== 'car' },
+      { id: 'coolant', text: 'Drain the coolant (radiator drain tap)', why: '', check: (c) => total(c.v.coolant.comp) < 1.0 || c.v.engineLoc !== 'car' },
+      { id: 'raise', text: 'Raise the front onto axle stands for access underneath', why: 'Starter, exhaust, propshaft and clutch connections are reached from below.', check: (c) => endOnStands(c.v, 'front') || c.v.engineLoc !== 'car' },
+      { id: 'conn', text: 'Disconnect every engine connection (Parts list → Engine connections)', why: 'Anything left attached will stop the engine coming out — or tear.', check: (c) => ENGINE_CONNECTIONS.every((k) => !connected(c.v, k)) || c.v.engineLoc !== 'car' },
+      { id: 'mounts', text: 'Undo the engine mounting bolts', why: '', check: (c) => isReleased(c.v, 'eng.mount_bolts') || c.v.engineLoc !== 'car' },
+      { id: 'lift', text: 'Select the cylinder block → Lift engine out with the hoist', why: 'Lift slowly, tilting the nose up to clear the front frame.', check: (c) => c.m.has('engine_out') },
+      { id: 'stand', text: 'Mount it on the engine stand', why: '', check: (c) => c.m.has('engine_on_stand') },
+    ],
+  },
+  bottom_end: {
+    id: 'bottom_end', title: 'Bottom-end inspection & rebuild', system: 'Engine', time: '≈ 10 h + machine shop',
+    tools: ['Micrometer', 'Plastigauge', 'Torque wrench 150 Nm', '3/4, 9/16, 1/2 AF sockets', 'Breaker bar'],
+    parts: ['Main & big-end shells (size to suit the crank)', 'Oil, filter, coolant'],
+    steps: [
+      { id: 'sump', text: 'Undo the sump bolts and remove the sump and oil pump', why: '', check: (c) => (!c.v.slots['eng.sump'].part && !c.v.slots['eng.oil_pump'].part) || c.m.has('crank_out') },
+      { id: 'rods', text: 'Remove all six big-end caps (9/16 AF)', why: 'Keep each cap with its own rod — they are machined as a pair.', check: (c) => [1, 2, 3, 4, 5, 6].every((n) => !c.v.slots[`eng.rod_nuts_${n}`].part) || c.m.has('crank_out') },
+      { id: 'mains', text: 'Undo the main bearing cap bolts (breaker bar) and lift the crankshaft out', why: '', check: (c) => c.m.has('crank_out') },
+      { id: 'inspect', text: 'Inspect the old shells and the crankshaft', why: 'Shell wear patterns tell you about oil supply and alignment.', check: (c) => c.m.has('inspect.eng.main_bearings') || c.m.has('inspect.crankshaft') || c.m.has('inspect.eng.crankshaft') },
+      { id: 'measure', text: 'Micrometer every main journal and compare with the manual', why: 'Below the service limit = regrind (or replace), not just new shells.', check: (c) => c.m.has('measure.main') },
+      { id: 'decide', text: 'Decide: reuse, polish, regrind (machine shop) or replace the crank', why: 'Machine shop work costs money and days; a new crankshaft costs more.', check: (c) => c.m.has('machine_shop') || c.m.has('new_crank') },
+      { id: 'shells', text: 'Fit main shells matching the crank size, lubricate, lay the crank in', why: 'Undersize shells on a standard crank lock it solid; standard shells on a reground crank leave it loose.', check: (c) => { const b = partIn(c.v, 'eng.main_bearings'); return !!b && b.origin === 'new' && !!c.v.slots['eng.crankshaft'].part; } },
+      { id: 'mainst', text: 'Torque the main bolts to 113 Nm (83 lb ft)', why: '', check: (c) => torqueVerdict(c.v, 'eng.main_bolts') === 'correct' },
+      { id: 'plasti', text: 'Check running clearance with Plastigauge', why: 'Spec 0.064–0.107 mm. Measure, don\'t assume.', check: (c) => c.m.has('measure.clearance') },
+      { id: 'bigends', text: 'Fit new big-end shells and torque the cap nuts to 50 Nm (37 lb ft)', why: '', check: (c) => { const b = partIn(c.v, 'eng.rod_bearings'); return !!b && b.origin === 'new' && [1, 2, 3, 4, 5, 6].every((n) => torqueVerdict(c.v, `eng.rod_nuts_${n}`) === 'correct'); } },
+      { id: 'close', text: 'Refit oil pump, pick-up and sump; sump bolts 20 Nm', why: '', check: (c) => !!c.v.slots['eng.oil_pump'].part && !!c.v.slots['eng.oil_pickup'].part && torqueVerdict(c.v, 'eng.sump_bolts') === 'correct' },
+      { id: 'refit', text: 'Hoist the engine back in, tighten the mounts (40 Nm) and reconnect everything', why: '', check: (c) => c.v.engineLoc === 'car' && torqueVerdict(c.v, 'eng.mount_bolts') === 'correct' && ENGINE_CONNECTIONS.every((k) => connected(c.v, k)) },
+      { id: 'fluids', text: 'New oil & filter, refill coolant (tap closed), reconnect the battery', why: '', check: (c) => sumpOil(c.v) > 6.3 && total(c.v.coolant.comp) / COOLANT_FULL > 0.93 && (c.v.slots['elec.term_neg'].vars.off ?? 0) < 0.5 },
+      { id: 'run', text: 'Start, check hot oil pressure (≥ 35 psi at 3000 rpm) and listen', why: 'The knock should be gone and the pressure back up.', check: (c) => c.m.has('hot_run') },
     ],
   },
 };

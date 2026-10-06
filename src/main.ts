@@ -12,6 +12,7 @@ import { Interaction } from './render/Interaction';
 import { AudioSystem } from './audio/Audio';
 import { UI, type AppApi } from './ui/UI';
 import { Modals } from './ui/modals';
+import { Tutorial } from './ui/Tutorial';
 import { bus, notify, type PickTarget } from './core/events';
 import { storage } from './save/Save';
 import { BRANDING } from './config/branding';
@@ -72,6 +73,7 @@ async function boot() {
   const ui = new UI(app);
   const modals = new Modals(app, ui.root);
   ui.modals = modals;
+  const tutorial = new Tutorial(app, ui.root);
 
   async function save() {
     try { await storage.save('autosave', game.state, game.jobDef?.title ?? (game.state.mode === 'sandbox' ? 'Free workshop' : 'Workshop')); } catch { notify('Could not save (browser storage unavailable).', 'bad'); }
@@ -93,6 +95,13 @@ async function boot() {
   }
   bus.on('ui:open', async ({ panel, arg }) => {
     if (panel === 'startJob') { game.startJob(arg as string); enterGame(); notify(`Work order accepted: ${game.jobDef?.title}`, 'good'); save(); }
+    if (panel === 'tutorial') {
+      const tier = arg as 1 | 2;
+      game.startJob(tier === 1 ? 't1_service' : 't2_knock');
+      enterGame();
+      tutorial.start(tier);
+      save();
+    }
     if (panel === 'sandbox') { game.startSandbox(); enterGame(); }
     if (panel === 'continue' || panel === 'load') {
       const s = await storage.load(panel === 'load' ? (arg as string) : 'autosave');
@@ -127,6 +136,8 @@ async function boot() {
     car.sync(game, dt);
     eq.update(game, dt, cam.camera, inter.ghost);
     ui.update(dt);
+    if (!paused) tutorial.update(dt);
+    tutorial.el.style.visibility = inMenu ? 'hidden' : 'visible';
     audio.update();
     // Outlines: hover (amber) and selection (blue)
     R.outline.selectedObjects = inter.hoverObject && !inMenu ? [inter.hoverObject] : [];

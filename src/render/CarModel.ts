@@ -221,7 +221,15 @@ export class CarModel implements Binder {
       const slotOffset = b ? this.slotOffset(b, q.obj, v) : new THREE.Vector3();
       q.obj.position.copy(q.base).addScaledVector(q.offset, ke).add(slotOffset);
     }
-    this.engine.root.position.y = ENGINE_ORIGIN[1] + ke * 0.95;
+    const loc = v.engineLoc ?? 'car';
+    if (loc === 'car') { this.engine.root.position.set(ENGINE_ORIGIN[0], ENGINE_ORIGIN[1] + ke * 0.95, ENGINE_ORIGIN[2]); this.engine.root.rotation.y = 0; }
+    else if (loc === 'hoist') { this.engine.root.position.set(ENGINE_ORIGIN[0] + 0.15, 1.45, 0); this.engine.root.rotation.z = 0.25; }
+    else {
+      this.root.updateMatrixWorld(true);
+      const p = this.root.worldToLocal(new THREE.Vector3(-2.4, 0.95, 3.8));
+      this.engine.root.position.copy(p); this.engine.root.rotation.set(0, Math.PI / 2, 0);
+    }
+    if (loc !== 'hoist') this.engine.root.rotation.z = 0;
     // X-ray / cutaway
     const wantX = this.view.xray || this.view.cutaway || this.view.exploded;
     this.applyXray(wantX);

@@ -12,6 +12,7 @@ import { torqueVerdict } from './threads';
 import { total, compatibility, freshness } from '../data/fluids';
 import { CORNERS } from './types';
 import { fmt } from '../core/units';
+import { bearingClearance } from '../data/parts';
 
 export interface Check { group: string; label: string; ok: boolean; detail?: string; severity?: 'info' | 'warn' | 'fail' }
 
@@ -121,6 +122,12 @@ export function assemblyCheck(v: VehicleState, opts: { requireTestRun?: boolean 
   out.push({ group: 'Vehicle', label: 'Ignition off', ok: !v.engine.running && (v.slots['int.ignition'].vars.on ?? 0) < 0.5, severity: 'warn' });
   const loose = CORNERS.filter((k) => !isReleased(v, `whl.spinner_${k}`) && torqueVerdict(v, `whl.spinner_${k}`) === 'under');
   out.push({ group: 'Vehicle', label: 'Wheel spinners tight', ok: loose.length === 0, detail: loose.length ? `Loose: ${loose.join(', ')}` : undefined, severity: 'fail' });
+  out.push({ group: 'Engine', label: 'Engine installed in the car', ok: (v.engineLoc ?? 'car') === 'car', severity: 'fail' });
+  out.push({ group: 'Cooling', label: 'Radiator drain tap closed', ok: (v.slots['cool.radiator'].vars.tap ?? 0) < 0.5, severity: 'fail' });
+  const mc = bearingClearance(v, 'main'), rc = bearingClearance(v, 'rod');
+  out.push({ group: 'Engine', label: 'Bearing running clearances in specification', ok: mc >= 0.064 && mc <= 0.107 && rc >= 0.064 && rc <= 0.107, detail: mc > 5 || rc > 5 ? 'Bearings or crankshaft missing' : `main ${fmt(mc, 3)} mm · big-end ${fmt(rc, 3)} mm (0.064–0.107)`, severity: 'fail' });
+  const hg = partIn(v, 'eng.head_gasket');
+  out.push({ group: 'Engine', label: 'Head gasket sound', ok: !!hg && !hg.flags.includes('damaged') && !hg.flags.includes('crushed'), detail: hg?.flags.includes('crushed') ? 'A used gasket was refitted' : hg?.flags.includes('damaged') ? 'Gasket failed' : undefined, severity: 'fail' });
   if (opts.requireTestRun) out.push({ group: 'Verification', label: 'Engine run & leak-checked after the work', ok: v.engine.ranSinceService, detail: v.engine.ranSinceService ? undefined : 'Start the engine, check for leaks and recheck levels', severity: 'warn' });
   return out;
 }

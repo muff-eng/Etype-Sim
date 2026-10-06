@@ -6,17 +6,17 @@
 import { bus } from '../core/events';
 import type { Game } from '../game/Game';
 
-const WORKLET = `
-class EngineProc extends AudioWorkletProcessor {
-  constructor() {
-    super();
+/** Engine synth shared by the AudioWorklet and the ScriptProcessor fallback (plain JS source). */
+const SYNTH_SRC = `
+class EngineSynth {
+  constructor(sr) {
+    this.sr = sr;
     this.p = { rpm: 0, running: 0, cranking: 0, mis: [0,0,0,0,0,0], rough: 0, knock: 0, belt: 0, fan: 0 };
     this.angle = 0; this.env = 0; this.tone = 0; this.ph = 0; this.sph = 0; this.lp = 0; this.lp2 = 0; this.k = -1; this.kn = 0; this.fanph = 0;
     this.order = [1,5,3,6,2,4];
-    this.port.onmessage = (e) => Object.assign(this.p, e.data);
   }
-  process(inputs, outputs) {
-    const out = outputs[0][0]; const sr = sampleRate; const p = this.p;
+  fill(out) {
+    const sr = this.sr; const p = this.p;
     for (let i = 0; i < out.length; i++) {
       this.angle = (this.angle + p.rpm * 6 / sr) % 720;
       const k = Math.floor(this.angle / 120);
@@ -40,8 +40,13 @@ class EngineProc extends AudioWorkletProcessor {
       if (p.running) s += this.lp * 0.08;
       out[i] = Math.tanh(s * 1.3) * 0.6;
     }
-    return true;
   }
+}`;
+
+const WORKLET = SYNTH_SRC + `
+class EngineProc extends AudioWorkletProcessor {
+  constructor() { super(); this.s = new EngineSynth(sampleRate); this.port.onmessage = (e) => Object.assign(this.s.p, e.data); }
+  process(inputs, outputs) { this.s.fill(outputs[0][0]); return true; }
 }
 registerProcessor('engine-proc', EngineProc);
 `;
@@ -115,7 +120,7 @@ export class AudioSystem {
   ctx: AudioContext | null = null;
   master!: GainNode;
   private cache = new Map<string, AudioBuffer>();
-  private engine: AudioWorkletNode | null = null;
+  private engine: { post: (d: object) => void } | null = null;
   private engineFilter!: BiquadFilterNode;
   private engineGain!: GainNode;
   private drain!: { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode } | null;
@@ -155,16 +160,38 @@ export class AudioSystem {
       src.connect(filter).connect(gain).connect(this.master); src.start();
       this.drain = { src, gain, filter };
       // Engine worklet
-      const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
-      await this.ctx.audioWorklet.addModule(url);
-      this.engine = new AudioWorkletNode(this.ctx, 'engine-proc');
       this.engineFilter = this.ctx.createBiquadFilter(); this.engineFilter.type = 'lowpass'; this.engineFilter.frequency.value = 600;
       this.engineGain = this.ctx.createGain(); this.engineGain.gain.value = 0.8;
-      this.engine.connect(this.engineFilter).connect(this.engineGain).connect(this.master);
+      this.engineFilter.connect(this.engineGain).connect(this.master);
       this.ready = true;
+      await this.startEngineVoice();
     } catch (e) {
       console.warn('Audio unavailable', e);
     }
+  }
+
+  /** AudioWorklet when the page may load module URLs (blob:/data:); otherwise a ScriptProcessor running the same synth. */
+  private async startEngineVoice() {
+    const ctx = this.ctx!;
+    const urls = [
+      () => URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })),
+      () => 'data:application/javascript;charset=utf-8,' + encodeURIComponent(WORKLET),
+    ];
+    if (ctx.audioWorklet) for (const mk of urls) {
+      try {
+        await ctx.audioWorklet.addModule(mk());
+        const node = new AudioWorkletNode(ctx, 'engine-proc');
+        node.connect(this.engineFilter);
+        this.engine = { post: (d) => node.port.postMessage(d) };
+        return;
+      } catch { /* try the next loader */ }
+    }
+    const Synth = new Function(SYNTH_SRC + '\nreturn EngineSynth;')() as new (sr: number) => { p: object; fill(o: Float32Array): void };
+    const synth = new Synth(ctx.sampleRate);
+    const sp = ctx.createScriptProcessor(2048, 0, 1);
+    sp.onaudioprocess = (e) => synth.fill(e.outputBuffer.getChannelData(0));
+    sp.connect(this.engineFilter);
+    this.engine = { post: (d) => Object.assign(synth.p, d) };
   }
 
   setVolume(v: number) { if (this.master) this.master.gain.value = v; }
@@ -192,7 +219,7 @@ export class AudioSystem {
     const v = this.game.state.vehicle;
     const e = v.engine;
     const belt = this.game.state.vehicle.parts[this.game.state.vehicle.slots['eng.fan_belt'].part ?? '']?.vars.deflection ?? 12;
-    this.engine.port.postMessage({
+    this.engine.post({
       rpm: e.running ? e.rpm : (this.game.sim?.crankRpm ?? 0), running: e.running ? 1 : 0, cranking: e.cranking ? 1 : 0,
       mis: e.misfire, rough: e.roughness, knock: e.bearingDamage, belt: e.running && belt > 18 && e.rpm > 1200 ? Math.min(1, (belt - 18) / 8) : 0, fan: e.fanOn ? 1 : 0,
     });

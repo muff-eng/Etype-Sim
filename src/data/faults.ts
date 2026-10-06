@@ -6,6 +6,9 @@ import type { SystemId } from '../sim/types';
 import type { VehicleState } from '../sim/vehicle';
 import { partIn, sumpOil, OIL_MIN, OIL_MAX, COOLANT_FULL, isFitted } from '../sim/vehicle';
 import { torqueVerdict } from '../sim/threads';
+import { bearingClearance } from './parts';
+import { ENGINE_CONNECTIONS } from './slots';
+import { connected, engineInCar } from '../sim/vehicle';
 import { total, compatibility, freshness } from './fluids';
 import { CORNERS } from '../sim/types';
 
@@ -43,6 +46,9 @@ export const DIAGNOSES: { id: string; system: SystemId; label: string }[] = [
   { id: 'water_pump', system: 'cooling', label: 'Failed water pump' },
   { id: 'radiator', system: 'cooling', label: 'Blocked radiator' },
   { id: 'head_gasket', system: 'cooling', label: 'Head gasket failure' },
+  { id: 'worn_bearings', system: 'engine', label: 'Worn crankshaft main / big-end bearings' },
+  { id: 'piston_slap', system: 'engine', label: 'Worn pistons / bores (piston slap)' },
+  { id: 'oil_pump', system: 'lubrication', label: 'Worn oil pump' },
   { id: 'fan', system: 'cooling', label: 'Cooling fan / fan switch fault' },
   { id: 'puncture', system: 'wheels', label: 'Punctured tyre (slow leak)' },
   { id: 'tyre_pressures', system: 'wheels', label: 'Incorrect tyre pressures only' },
@@ -147,5 +153,42 @@ export const FAULTS: Record<string, FaultDef> = {
     },
     resolved: (v) => CORNERS.every((c) => { const w = partIn(v, `whl.${c}`); return !!w && !w.flags.includes('punctured') && Math.abs((w.vars.pressure ?? 0) - 32) <= 1.0; }),
   },
+  head_gasket: {
+    id: 'head_gasket', name: 'Failed head gasket between cylinders 3 and 4', system: 'engine', diagnosis: 'head_gasket',
+    cause: 'A previous overheat had burnt the gasket fire-ring between cylinders 3 and 4. Combustion gas leaked between the two cylinders and into the waterways: low compression on 3 and 4, a misfire, white sweet-smelling smoke, and coolant slowly consumed.',
+    tests: ['compression', 'exhaust.smoke', 'coolant.level', 'pressure_test', 'idle_drop', 'inspect.eng.head_gasket'],
+    apply: (v) => { partIn(v, 'eng.head_gasket')!.flags.push('damaged'); v.coolant.comp = { coolant_iat: 7.6, water: 7.6 }; v.engine.headGasketDamage = 0.55; },
+    resolved: (v) => {
+      const g = partIn(v, 'eng.head_gasket');
+      return !!g && !g.flags.includes('damaged') && !g.flags.includes('crushed') && !!v.slots['eng.head'].part
+        && Array.from({ length: 14 }, (_, i) => `eng.head_nut_${i + 1}`).every((k) => torqueVerdict(v, k) === 'correct')
+        && ['eng.cover_nuts_in', 'eng.cover_nuts_ex'].every((k) => torqueVerdict(v, k) === 'correct')
+        && connected(v, 'eng.conn_top_hose') && total(v.coolant.comp) / COOLANT_FULL > 0.93 && (v.slots['cool.radiator'].vars.tap ?? 0) < 0.5
+        && [1, 2, 3, 4, 5, 6].every((c) => connected(v, `ign.lead_${c}`) && (v.slots[`ign.lead_${c}`].vars.target ?? c) === c);
+    },
+  },
+  bearing_knock: {
+    id: 'bearing_knock', name: 'Worn main & big-end bearings, crankshaft below service limit', system: 'engine', diagnosis: 'worn_bearings',
+    cause: 'Years of short trips and a skipped oil change had worn the bearing overlay through and scored the main journals beyond the service limit. The extra running clearance bled oil pressure away (low hot idle pressure) and let the crank hammer the shells: a deep knock that rises with load. New shells alone would not have fixed it — the journals had to be reground and matched with 0.010 in undersize shells.',
+    tests: ['dipstick', 'inspect.lub.drain_plug', 'measure.main', 'measure.clearance', 'inspect.eng.main_bearings', 'inspect.crankshaft'],
+    apply: (v) => {
+      const c = partIn(v, 'eng.crankshaft')!;
+      [0.031, 0.038, 0.046, 0.042, 0.036, 0.033, 0.027].forEach((w, i) => (c.vars[`wear${i + 1}`] = w));
+      c.vars.pinWear = 0.024; c.condition = 0.35;
+      partIn(v, 'eng.main_bearings')!.vars.wear = 0.05; partIn(v, 'eng.main_bearings')!.flags.push('worn');
+      partIn(v, 'eng.rod_bearings')!.vars.wear = 0.045; partIn(v, 'eng.rod_bearings')!.flags.push('worn');
+      partIn(v, 'lub.drain_plug')!.vars.metal = 0.9;
+      v.oil.comp = { oil_20w50_used: 7.4 };
+    },
+    resolved: (v) => {
+      const c = partIn(v, 'eng.crankshaft');
+      if (!c || !engineInCar(v)) return false;
+      const journalsOk = [1, 2, 3, 4, 5, 6, 7].every((n) => (c.vars[`wear${n}`] ?? 0.003) <= 0.008) && (c.vars.pinWear ?? 0.003) <= 0.008;
+      const clr = [bearingClearance(v, 'main'), bearingClearance(v, 'rod')].every((x) => x >= 0.064 && x <= 0.107);
+      const torques = ['eng.main_bolts', 'eng.sump_bolts', 'eng.mount_bolts', ...[1, 2, 3, 4, 5, 6].map((k) => `eng.rod_nuts_${k}`)].every((k) => torqueVerdict(v, k) === 'correct');
+      const s = sumpOil(v) + v.oil.gallery;
+      return journalsOk && clr && torques && ENGINE_CONNECTIONS.every((k) => connected(v, k)) && s >= OIL_MIN && s <= OIL_MAX + 0.35
+        && total(v.coolant.comp) / COOLANT_FULL > 0.93 && (v.slots['cool.radiator'].vars.tap ?? 0) < 0.5;
+    },
+  },
 };
-

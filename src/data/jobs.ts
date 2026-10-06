@@ -91,6 +91,22 @@ export const JOBS: JobDef[] = [
     requireDiagnosis: true, requireTestRun: false, partsHint: [], mileage: 29400,
     unlock: { jobs: ['t1_service'] }, setup: (v) => ageCar(v, 0.6),
   },
+  {
+    id: 't2_headgasket', tier: 2, title: 'White smoke & vanishing coolant', customer: 'Mr. Delacroix (vintage rally entrant)',
+    complaint: '"After it boiled over on a hill climb it\'s never been right. Lumpy on tick-over, clouds of white smoke that smell sweet, and I\'m topping up the coolant every week."',
+    requests: ['Diagnose and repair', 'Return it running smoothly with no coolant loss'],
+    faults: ['head_gasket'], bookHours: 7, procedures: ['head_gasket'], skills: ['engine', 'cooling'],
+    requireDiagnosis: true, requireTestRun: true, partsHint: ['head_gasket', 'coolant_premix_5l'], mileage: 66120,
+    setup: (v) => ageCar(v, 1.3),
+  },
+  {
+    id: 't2_knock', tier: 2, title: 'Knocking from the bottom end', customer: 'Ms. Okonkwo (bought it at auction)',
+    complaint: '"There\'s a deep knock that gets louder when I accelerate, and the oil-pressure gauge drops right down when it\'s hot at idle. The seller said it \'just needs a service\'. Can you find out what\'s really going on and fix it properly?"',
+    requests: ['Diagnose the knock', 'Rebuild the bottom end as required', 'Refit, refill and road-ready'],
+    faults: ['bearing_knock'], bookHours: 18, procedures: ['engine_removal', 'bottom_end'], skills: ['engine', 'lubrication'],
+    requireDiagnosis: true, requireTestRun: true, partsHint: ['main_bearings_010', 'rod_bearings_010', 'oil_20w50_5l', 'filter_kit', 'coolant_premix_5l'], mileage: 91450,
+    unlock: { jobs: ['t2_headgasket'] }, setup: (v) => ageCar(v, 1.6),
+  },
 ];
 
 export const JOB_BY_ID = Object.fromEntries(JOBS.map((j) => [j.id, j]));

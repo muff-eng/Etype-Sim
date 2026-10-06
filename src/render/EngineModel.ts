@@ -80,7 +80,9 @@ export function buildEngine(M: Mats, B: Binder): EngineParts {
       nuts.setMatrixAt(i, mtx);
     }
     nuts.castShadow = true;
-    g.add(nuts);
+    const ng = group(nuts);
+    root.add(ng);
+    B.bind(side > 0 ? 'eng.cover_nuts_in' : 'eng.cover_nuts_ex', ng, { axis: V(0, 1, 0), pitch: 0.003 });
     return g;
   };
   const coverIn = camCover(1), coverEx = camCover(-1);
@@ -387,6 +389,47 @@ export function buildEngine(M: Mats, B: Binder): EngineParts {
   root.add(ex(pickup, 0, -0.78, 0));
   B.bind('eng.oil_pickup', pickup);
   internals.push(pump, pickup);
+
+  // ── Tier II fasteners, shells and the engine connections ──
+  const ring = (n: number, mk: (i: number) => THREE.Vector3, af: number, mat: THREE.Material, axis: 'x' | 'y' | 'z' = 'y') => {
+    const g = new THREE.Group();
+    for (let i = 0; i < n; i++) { const h = hexNut(af, 0.008, mat, axis); h.position.copy(mk(i)); g.add(h); }
+    return g;
+  };
+  const sumpBolts = ring(26, (i) => i < 13 ? V(-0.31 + i * 0.05, -0.078, 0.165) : V(-0.31 + (i - 13) * 0.05, -0.078, -0.165), 0.0127, M.zinc);
+  root.add(ex(sumpBolts, 0, -0.8, 0));
+  B.bind('eng.sump_bolts', sumpBolts, { axis: V(0, -1, 0), pitch: 0.003 });
+  const mainBolts = ring(14, (i) => V(-0.3 + Math.floor(i / 2) * 0.1, -0.07, i % 2 ? 0.045 : -0.045), 0.019, M.zinc);
+  root.add(ex(mainBolts, 0, -0.7, 0));
+  B.bind('eng.main_bolts', mainBolts, { axis: V(0, -1, 0), pitch: 0.003 });
+  const shells = new THREE.Group();
+  for (let j = 0; j < 7; j++) { const t = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.003, 6, 20, Math.PI), M.brass); t.rotation.y = Math.PI / 2; t.rotation.x = Math.PI; t.position.x = -0.3 + j * 0.1; shells.add(t); }
+  root.add(ex(shells, 0, -0.66, 0));
+  B.bind('eng.main_bearings', shells);
+  for (let c = 1; c <= 6; c++) {
+    const rod = rods[c - 1];
+    const nutsG = group(at(hexNut(0.0143, 0.008, M.zinc), 0, -0.035, 0.022), at(hexNut(0.0143, 0.008, M.zinc), 0, -0.035, -0.022));
+    rod.add(nutsG);
+    B.bind(`eng.rod_nuts_${c}`, nutsG, { axis: V(0, -1, 0), pitch: 0.003 });
+    const shell = new THREE.Mesh(new THREE.TorusGeometry(0.027, 0.0028, 6, 18), M.brass);
+    shell.rotation.y = Math.PI / 2;
+    rod.add(shell);
+    B.bind('eng.rod_bearings', shell);
+  }
+  const conn = (id: string, p: THREE.Vector3, color: number) => {
+    const m = group(cyl(0.012, 0.03, new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.3 }), 'y', 10));
+    m.position.copy(p);
+    root.add(m);
+    B.bind(`eng.conn_${id}`, m);
+  };
+  conn('fuel', V(0.1, 0.33, 0.33), 0xb03a2e); conn('throttle', V(-0.05, 0.3, 0.33), 0x999999); conn('choke', V(-0.25, 0.3, 0.32), 0x777777);
+  conn('coil', V(0.06, 0.29, 0.24), 0x111111); conn('alt', V(0.25, 0.12, -0.25), 0x553311); conn('senders', V(-0.1, 0.1, 0.2), 0x2255aa);
+  conn('heater', V(-0.33, 0.33, 0.12), 0x111111); conn('top_hose', V(0.39, 0.36, 0.02), 0x222222); conn('bottom_hose', V(0.38, 0.08, -0.06), 0x222222);
+  conn('earth', V(-0.1, -0.02, -0.19), 0xb87333); conn('starter', V(-0.3, 0.03, 0.23), 0xaa2222); conn('exhaust', V(-0.1, -0.15, -0.18), 0x555555);
+  conn('prop', V(-0.97, -0.01, 0), 0x666666); conn('clutch', V(-0.45, -0.02, 0.13), 0x8a7a30); conn('speedo', V(-0.9, -0.05, 0.1), 0x333333); conn('gear', V(-0.75, 0.1, 0), 0x222222);
+  const mountBolts = group(at(hexNut(0.0143, 0.012, M.zinc), 0.22, -0.055, 0.2), at(hexNut(0.0143, 0.012, M.zinc), 0.22, -0.055, -0.2));
+  root.add(mountBolts);
+  B.bind('eng.mount_bolts', mountBolts, { axis: V(0, -1, 0), pitch: 0.004 });
 
   const pulleys = [damper, wpPulley, alt];
   return { root, crank, pistons, rods, camIn, camEx, valvesIn, valvesEx, altPivot, fanBelt, explode, clipMats, internals, leadBoots, pulleys };

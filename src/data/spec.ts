@@ -155,6 +155,7 @@ export const TORQUE: Record<string, { label: string; nm: number; lbft: number; s
   drainPlug: { label: 'Sump drain plug', nm: 34, lbft: 25, status: 'provisional' },
   filterBolt: { label: 'Oil filter canister centre bolt', nm: 20, lbft: 15, status: 'provisional' },
   sumpBolts: { label: 'Sump to block bolts', nm: 20, lbft: 15, status: 'provisional' },
+  engineMount: { label: 'Engine mounting bolts', nm: 40, lbft: 30, status: 'provisional' },
   battClamp: { label: 'Battery terminal pinch bolts', nm: 5, lbft: 3.7, status: 'provisional' },
   battHold: { label: 'Battery hold-down nuts', nm: 4, lbft: 3, status: 'provisional', note: 'Snug only — do not crack the case' },
   hoseClip: { label: 'Worm-drive hose clips', nm: 3.5, lbft: 2.6, status: 'provisional' },

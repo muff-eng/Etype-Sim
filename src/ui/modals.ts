@@ -97,13 +97,13 @@ export class Modals {
     const g = this.g;
     const saves = await storage.list();
     const auto = saves.find((s) => s.id === 'autosave');
-    const t1done = JOBS.filter((j) => g.state.progress.completed[j.id]).length;
+    const t1done = JOBS.filter((j) => j.tier === 1 && g.state.progress.completed[j.id]).length;
     clear(this.menuEl).append(h('div', { class: 'inner' },
       h('h1', null, BRANDING.gameTitle.replace(' WORKSHOP', '')), h('div', { style: 'font-family:Georgia,serif;letter-spacing:0.4em;color:#cfc6b0;margin:-2px 0 4px' }, 'W O R K S H O P'),
       h('div', { class: 'sub' }, `${BRANDING.variant} · ${BRANDING.engineName} · ${BRANDING.modelYear}`),
       auto ? h('button', { class: 'big primary', onclick: () => bus.emit('ui:open', { panel: 'continue' }) }, 'Continue', h('small', null, `Autosave — ${new Date(auto.savedAt).toLocaleString()}`)) : null,
-      h('button', { class: 'big', onclick: () => this.jobBoard() }, 'Tier I — Maintenance', h('small', null, `A running car that needs servicing and fault-finding · ${t1done}/${JOBS.length} work orders complete`)),
-      h('button', { class: 'big', disabled: true, title: 'Phase 3' }, 'Tier II — Fixer Upper 🔒', h('small', null, 'Engine removal, strip-down, measurement & rebuild. Unlocks with Phase 3 (complete all Tier I work orders, reputation ≥ 60).')),
+      h('button', { class: 'big', onclick: () => this.jobBoard(1) }, 'Tier I — Maintenance', h('small', null, `A running car that needs servicing and fault-finding · ${t1done}/${JOBS.filter((j) => j.tier === 1).length} work orders complete`)),
+      h('button', { class: 'big', onclick: () => this.jobBoard(2) }, 'Tier II — Fixer Upper', h('small', null, `Head off, engine out on the hoist, bottom end measured, machined & rebuilt · ${JOBS.filter((j) => j.tier === 2 && g.state.progress.completed[j.id]).length}/${JOBS.filter((j) => j.tier === 2).length} complete`)),
       h('button', { class: 'big', disabled: true, title: 'Phase 5' }, 'Tier III — Junkyard Save 🔒', h('small', null, 'Bare shell, seized engine core, body restoration & machine shop. Phase 5.')),
       h('button', { class: 'big', onclick: () => bus.emit('ui:open', { panel: 'sandbox' }) }, 'Free Workshop', h('small', null, 'Sandbox — no customer, all Phase 1–2 tools. Explore, dismantle, test.')),
       h('div', { class: 'row' }, h('button', { onclick: () => this.toolbox() }, 'Workshop'), h('button', { onclick: () => this.parts() }, 'Parts'), h('button', { onclick: () => this.manual() }, 'Manual'), h('button', { onclick: () => this.settings() }, 'Settings'), h('button', { onclick: () => this.saveLoad() }, 'Load')),
@@ -112,13 +112,19 @@ export class Modals {
   }
 
   // ───────────── Job board ─────────────
-  jobBoard() {
-    this.open('jobBoard', 'Job board — Tier I (Maintenance)', (b) => {
+  jobBoard(tier: 1 | 2 = 1) {
+    this.open('jobBoard', `Job board — ${tier === 1 ? 'Tier I (Maintenance)' : 'Tier II (Fixer Upper)'}`, (b) => {
       const g = this.g;
       const prog = g.state.progress;
+      b.append(h('div', { class: 'tabs' },
+        h('button', { class: tier === 1 ? 'on' : '', onclick: () => this.jobBoard(1) }, 'Tier I — Maintenance'),
+        h('button', { class: tier === 2 ? 'on' : '', onclick: () => this.jobBoard(2) }, 'Tier II — Fixer Upper'),
+        h('span', { style: 'flex:1' }),
+        h('button', { class: 'info', onclick: () => { this.close(); bus.emit('ui:open', { panel: 'tutorial', arg: tier }); } }, `▶ Guided tutorial (Tier ${tier === 1 ? 'I' : 'II'})`)));
+      if (tier === 2) b.append(h('p', { class: 'warn' }, 'Tier II needs an engine hoist, engine stand, micrometer and Plastigauge (Tools). Completing Tier I first is recommended.'));
       b.append(h('p', { class: 'dim' }, `Labour is paid at book time (£${LABOUR_RATE}/h) × quality. Customers pay for the parts the job needed — not for guesses. Reputation ${Math.round(prog.rep)}.`));
       const grid = h('div', { class: 'grid2' });
-      for (const j of JOBS) {
+      for (const j of JOBS.filter((x) => x.tier === tier)) {
         const done = prog.completed[j.id];
         const locked = j.unlock?.jobs?.some((x) => !prog.completed[x]);
         grid.append(h('div', { class: `card ${locked ? 'locked' : ''}` },
@@ -264,8 +270,20 @@ export class Modals {
     this.open('parts', 'Parts computer', (b) => {
       const g = this.g;
       b.append(h('div', { class: 'tabs' }, ...([['new', 'New parts'], ['fluids', 'Fluids & consumables'], ['used', 'Used / junkyard'], ['machine', 'Machine shop']] as const).map(([k, l]) => h('button', { class: k === tab ? 'on' : '', onclick: () => { tab = k; this.current?.render(); } }, l))));
-      if (tab === 'used' || tab === 'machine') {
-        b.append(h('div', { class: 'card' }, h('b', null, tab === 'used' ? 'Used parts & junkyard search' : 'Machine shop'), h('p', { class: 'dim' }, tab === 'used' ? 'Used parts arrive with UNKNOWN condition until inspected and measured. Arrives with Tier III (Phase 5).' : 'Honing, boring, crank grinding, head resurfacing, valve-seat work and balancing — priced in money and days. Arrives with Tier II/III (Phases 3–5).')));
+      if (tab === 'used') {
+        b.append(h('div', { class: 'card' }, h('b', null, 'Used parts & junkyard search'), h('p', { class: 'dim' }, 'Used parts arrive with UNKNOWN condition until inspected and measured. Arrives with Tier III (Phase 5).')));
+        return;
+      }
+      if (tab === 'machine') {
+        const cranks = Object.values(g.state.inventory).filter((p) => p.def === 'crankshaft');
+        b.append(h('p', { class: 'dim' }, 'Send removed components away for machining. Work costs money and days on the workshop clock. Measure first — the shop does what you ask, not what the part needs.'));
+        if (!cranks.length) b.append(h('p', null, 'Nothing to send: remove the crankshaft (engine on the stand) and it will appear here.'));
+        for (const p of cranks) b.append(h('div', { class: 'card', style: 'margin-bottom:6px' }, h('b', null, `${PARTS[p.def].name} (${p.location === 'tray' ? 'from this car' : p.origin})`),
+          h('div', { class: 'dim' }, `Size: ${(p.vars.undersize ?? 0) > 0 ? `${((p.vars.undersize ?? 0) / 0.254 * 0.010).toFixed(3)} in undersize` : 'standard'}`),
+          h('div', { style: 'display:flex;gap:6px;margin-top:6px' },
+            h('button', { onclick: () => g.machineShop(p.uid, 'polish') }, 'Polish journals — £85, 1 day'),
+            h('button', { onclick: () => g.machineShop(p.uid, 'regrind') }, 'Regrind 0.010 in undersize — £260, 3 days'))));
+        b.append(h('div', { class: 'card dim' }, 'Boring, honing, head resurfacing, valve-seat work and balancing arrive with Tier III (Phase 5).'));
         return;
       }
       const jd = g.jobDef;
@@ -337,7 +355,7 @@ export class Modals {
       if (r.damage.length) b.append(h('h3', null, 'Damage caused'), h('ul', null, ...r.damage.map((v) => h('li', { class: 'bad' }, v))));
       b.append(h('h3', { style: 'margin-top:10px' }, 'Assembly check at hand-over'), checkTable(r.checks));
       b.append(h('h3', { style: 'margin-top:10px' }, 'Error-detection analysis of the car you returned'), checkTable(r.analysis));
-      b.append(h('div', { style: 'margin-top:10px' }, h('button', { class: 'primary', onclick: () => { this.close(); this.jobBoard(); } }, 'Back to the job board')));
+      b.append(h('div', { style: 'margin-top:10px' }, h('button', { class: 'primary', onclick: () => { this.close(); this.jobBoard(r.job.tier as 1 | 2); } }, 'Back to the job board')));
     });
   }
 

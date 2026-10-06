@@ -6,14 +6,15 @@
  * electrical charge and fluid flows.
  */
 import type { VehicleState } from './vehicle';
-import { partIn, isOn, isFitted, slotVars, sumpOil, specTorque, OIL_MAX, COOLANT_FULL } from './vehicle';
+import { partIn, isOn, isFitted, slotVars, sumpOil, specTorque, OIL_MAX, COOLANT_FULL, connected, engineInCar } from './vehicle';
+import { bearingClearance } from '../data/parts';
 import { evaluate, applyElectrical, elecInputsFrom, type ElecResult } from './electrical';
 import { addFluid, removeFluid, total, viscosity, compatibility, type Composition } from '../data/fluids';
 import { SLOTS } from '../data/slots';
 import { TDC_COMP } from '../data/layout';
 import { clamp } from '../core/units';
 
-export type Outflow = { at: 'drain' | 'filter' | 'hose' | 'cap' | 'engine'; comp: Composition };
+export type Outflow = { at: 'drain' | 'filter' | 'hose' | 'cap' | 'engine' | 'tap'; comp: Composition };
 export type EngineEvent = 'start' | 'stall' | 'backfire' | 'click' | 'crank' | 'catch' | 'fuse' | 'steam' | 'knock' | 'shock';
 
 export interface SimOut {
@@ -140,11 +141,14 @@ export function simulate(v: VehicleState, dtReal: number, timeScale: number, pre
   if (elec.chatter && starter) out.events.push('click');
 
   // ── Fuel delivery: immersed pump fills float chambers when it gets voltage ──
-  if (elec.pumpV > 8 && v.fuelL > 0.5) e.fuelBowls = Math.min(1, e.fuelBowls + dtReal * 0.35);
+  const inCar = engineInCar(v);
+  const fuelOk = connected(v, 'eng.conn_fuel') && inCar;
+  if (!fuelOk) e.fuelBowls = Math.max(0, e.fuelBowls - dtReal * 0.02);
+  if (fuelOk && elec.pumpV > 8 && v.fuelL > 0.5) e.fuelBowls = Math.min(1, e.fuelBowls + dtReal * 0.35);
   if (e.running) e.fuelBowls = Math.max(0, e.fuelBowls - dtReal * (elec.pumpV > 8 && v.fuelL > 0.5 ? 0 : 0.04));
 
   // ── Ignition & mixture ──
-  const ign = ignitionAnalysis(v, ignOn ? elec.coilV + (e.running ? 0 : 0) : 0);
+  const ign = ignitionAnalysis(v, ignOn && connected(v, 'eng.conn_coil') ? elec.coilV : 0);
   out.sparks = ign.sparks.slice(1);
   const cold = clamp((60 - e.coolantC) / 45, 0, 1);
   const choke = isOn(v, 'int.choke');
@@ -157,11 +161,24 @@ export function simulate(v: VehicleState, dtReal: number, timeScale: number, pre
   const mixEff = mixOk ? 1 - Math.min(0.5, Math.abs(lambda - 0.95) * 0.9) : 0;
 
   // compression: plug must be seated to seal
-  const comp = [0, 1, 2, 3, 4, 5, 6].map((c) => (c === 0 ? 0 : (isFitted(v, `ign.plug_${c}`) && v.slots[`ign.plug_${c}`].threadDamage < 1 ? 1 : 0.15)));
+  const gasket = partIn(v, 'eng.head_gasket');
+  const gasketBlown = !gasket || gasket.flags.includes('damaged') || !v.slots['eng.head'].part;
+  const headTight = Array.from({ length: 14 }, (_, i) => v.slots[`eng.head_nut_${i + 1}`]).every((s) => s.part && s.torque > 40);
+  const comp = [0, 1, 2, 3, 4, 5, 6].map((c) => {
+    if (c === 0) return 0;
+    let k = isFitted(v, `ign.plug_${c}`) && v.slots[`ign.plug_${c}`].threadDamage < 1 ? 1 : 0.15;
+    if (!v.slots[`eng.piston_${c}`].part || !v.slots['eng.head'].part) k = 0;
+    if (gasketBlown && (c === 3 || c === 4)) k *= 0.42;
+    if (!headTight) k *= 0.6;
+    return k;
+  });
 
   // ── Cranking ──
   const visc = viscosity(v.oil.comp, v.oil.tempC) || 1;
-  e.cranking = elec.solenoidEngaged && !e.running;
+  // A bottom end with no running clearance (wrong shells) or missing parts will not turn over
+  const clr = Math.min(bearingClearance(v, 'main'), bearingClearance(v, 'rod'));
+  const locked = clr < 0.02 || !v.slots['eng.crankshaft'].part;
+  e.cranking = elec.solenoidEngaged && !e.running && inCar && connected(v, 'eng.conn_starter') && !locked;
   if (e.cranking) {
     const friction = 1 / (0.75 + 0.06 * visc);
     out.crankRpm = clamp((elec.motorV - 4.6) * 52 * friction, 0, 280);
@@ -268,6 +285,21 @@ export function simulate(v: VehicleState, dtReal: number, timeScale: number, pre
       if (q > 0) out.outflows.push({ at: 'hose', comp: removeFluid(v.coolant.comp, q) });
     }
   }
+
+  // Radiator drain tap & disconnected coolant hoses
+  if ((v.slots['cool.radiator'].vars.tap ?? 0) > 0.5) {
+    const cl = total(v.coolant.comp);
+    const q = Math.min(cl, dtG * 0.03 * Math.sqrt(cl));
+    if (q > 0) out.outflows.push({ at: 'tap', comp: removeFluid(v.coolant.comp, q) });
+  }
+  if ((!connected(v, 'eng.conn_top_hose') || !connected(v, 'eng.conn_bottom_hose')) && total(v.coolant.comp) > 6) {
+    const q = Math.min(total(v.coolant.comp) - 6, dtG * 0.05);
+    if (q > 0) out.outflows.push({ at: 'hose', comp: removeFluid(v.coolant.comp, q) });
+  }
+  if (gasketBlown && e.running) {
+    e.headGasketDamage = Math.max(e.headGasketDamage, 0.55);
+    removeFluid(v.coolant.comp, Math.min(total(v.coolant.comp), dtG * 0.0004));
+  } else if (!gasketBlown) e.headGasketDamage = Math.min(e.headGasketDamage, 0);
 
   // ── Cooling ──
   const coolL = total(v.coolant.comp);

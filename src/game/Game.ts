@@ -6,7 +6,7 @@ import { bus, notify, sound } from '../core/events';
 import { createVehicle, newPart, partIn, sumpOil, isOn, slotVars, onGround, wheelOffGround, OIL_MAX, OIL_MIN, COOLANT_FULL, isReleased, isFitted, specTorque, threadReleased } from '../sim/vehicle';
 import type { VehicleState } from '../sim/vehicle';
 import { simulate, type SimOut } from '../sim/engine';
-import { canFit, canReach, canRemove, checkReq } from '../sim/access';
+import { canFit, canReach, canRemove, checkReq, BUILD_PHASE } from '../sim/access';
 import { driveCheck, workFastener, type Grip, type DriveCheck, torqueVerdict } from '../sim/threads';
 import { evaluate, elecInputsFrom, meterOhms, meterVolts, testLamp, TEST_POINTS, type NodeId } from '../sim/electrical';
 import { PARTS, type MeasurementDef } from '../data/parts';
@@ -23,6 +23,11 @@ import { h01, hashStr, mulberry32, uid } from '../core/rng';
 import { clamp, fmt, toLbft } from '../core/units';
 import { SPEC } from '../data/spec';
 import { assemblyCheck, analyzeVehicle } from '../sim/diagnostics';
+import { bearingClearance } from '../data/parts';
+import { ENGINE_CONNECTIONS } from '../data/slots';
+import { bonnetOpen as bonnetOpenFn } from '../sim/vehicle';
+
+const BOTTOM_END = new Set(['eng.crankshaft', 'eng.main_bearings', 'eng.rod_bearings']);
 
 export type JackPos = Corner | 'F';
 export interface MeterState { mode: 'V' | 'R' | 'C'; red: NodeId | null; black: NodeId | null; reading: string; lamp: number }
@@ -114,6 +119,7 @@ export class Game {
     st.vehicle.odometer = jd.mileage;
     jd.setup?.(st.vehicle);
     for (const f of jd.faults) FAULTS[f].apply(st.vehicle);
+    this.updateBottomEnd();
     st.vehicle.engine.ranSinceService = false;
     st.workshop.drainPan = { x: 1.9, z: -1.5, comp: {} };
     st.workshop.stands = []; st.workshop.spills = []; st.workshop.charger.connected = false;
@@ -213,9 +219,9 @@ export class Game {
       const l = total(f.comp);
       if (l <= 0) continue;
       this.flows[f.at] = (this.flows[f.at] ?? 0) + l / Math.max(1e-6, dtG);
-      const local: V3 = f.at === 'drain' ? POINTS.drainPlug : f.at === 'filter' ? POINTS.filterBottom : f.at === 'hose' ? POINTS.bottomHoseRad : [1.55, 0.2, 0.36];
+      const local: V3 = f.at === 'drain' ? POINTS.drainPlug : f.at === 'filter' ? POINTS.filterBottom : f.at === 'hose' ? POINTS.bottomHoseRad : f.at === 'tap' ? [1.52, 0.22, 0.05] : [1.55, 0.2, 0.36];
       const w = pose.apply(local);
-      this.catchFluid(w[0], w[2], f.comp, f.at === 'hose' || f.at === 'cap' ? 'coolant' : 'oil');
+      this.catchFluid(w[0], w[2], f.comp, f.at === 'hose' || f.at === 'cap' || f.at === 'tap' ? 'coolant' : 'oil');
     }
     for (const l of out.leaks) this.flows[`leak_${l.at}`] = l.rate;
   }
@@ -467,6 +473,14 @@ export class Game {
       this.milestone('filter_off');
     }
     if (slotId.startsWith('ign.plug_')) this.milestone('plug_out');
+    if (slotId === 'eng.head') this.milestone('head_off');
+    if (slotId === 'eng.crankshaft') this.milestone('crank_out');
+    if (slotId === 'eng.sump') {
+      const oil = total(this.v.oil.comp);
+      if (oil > 0.05) { const st = this.standWorld(); this.catchFluid(st[0], st[2], removeFluid(this.v.oil.comp, oil), 'oil'); notify('Oil left in the sump pours onto the floor.', 'warn'); }
+    }
+    if (slotId === 'eng.head_gasket') { const g = this.state.inventory[p.uid]; if (g && !g.flags.includes('crushed')) g.flags.push('crushed'); }
+    if (BOTTOM_END.has(slotId)) this.updateBottomEnd();
     bus.emit('vehicle:changed', { slot: slotId });
     bus.emit('inventory:changed', {});
   }
@@ -508,6 +522,9 @@ export class Game {
     if (slotId === 'lub.drain_washer' && p.flags.includes('crushed')) notify('That washer has already been crushed once…', 'warn');
     if (slotId === 'lub.filter_canister' && !this.v.slots['lub.filter_element'].part) notify('The canister is empty — no filter element!', 'warn');
     if (slotId === 'lub.drain_plug' && !this.v.slots['lub.drain_washer'].part) notify('No sealing washer on the plug.', 'warn');
+    if (slotId === 'eng.crankshaft' && p.origin === 'new') this.milestone('new_crank');
+    if (BOTTOM_END.has(slotId)) this.updateBottomEnd();
+    if (slotId === 'eng.head_gasket' && p.flags.includes('crushed')) this.violation('Re-used a head gasket');
     if (PARTS[p.def].wrongFor) this.violation(`Fitted an incorrect part: ${PARTS[p.def].name}`);
     sound(d.heavy ? 'thud' : 'part_fit', 0.7);
     this.addTime(d.heavy ? 2 : 0.5);
@@ -795,23 +812,25 @@ export class Game {
 
   measure(p: PartState, m: MeasurementDef, slotId?: string) {
     const kind = this.toolKind();
-    if (m.phase && m.phase > 2) return notify('This measurement arrives with Tier II (Phase 3).', 'info');
+    if (m.phase && m.phase > BUILD_PHASE) return notify('This measurement arrives with Tier II (Phase 3).', 'info');
     if (!kind || !m.tools.includes(kind as any)) return notify(`Select a suitable tool: ${m.tools.map((k) => TOOL_LIST.find((t) => t.kind === k)?.name ?? k).join(' or ')}.`, 'warn');
     const tool = TOOL_LIST.find((t) => t.kind === kind)!;
-    const truth = m.read(p);
+    const truth = m.read(p, this.v);
+    const spec = m.specFn ? m.specFn(p) : m.spec;
     const res = tool.resolution ?? 0.01;
     const rng = mulberry32(hashStr(p.uid + m.id + Math.floor(this.state.time / 600)))();
     const val = Math.round((truth + (rng - 0.5) * res * 1.2) / res) * res;
     p.known.measured[m.id] = val;
-    const inSpec = (m.spec?.min == null || val >= m.spec.min - 1e-9) && (m.spec?.max == null || val <= m.spec.max + 1e-9);
-    const verdict = !m.spec ? '' : inSpec ? 'WITHIN SPECIFICATION' : (m.spec.min != null && val < m.spec.min) ? (m.spec.serviceLimit != null && val < m.spec.serviceLimit ? 'BELOW SERVICE LIMIT' : 'BELOW SPECIFICATION') : 'ABOVE SPECIFICATION';
+    const inSpec = (spec?.min == null || val >= spec.min - 1e-9) && (spec?.max == null || val <= spec.max + 1e-9);
+    const verdict = !spec ? '' : inSpec ? 'WITHIN SPECIFICATION' : (spec.min != null && val < spec.min) ? (spec.serviceLimit != null && val < spec.serviceLimit ? 'BELOW SERVICE LIMIT' : 'BELOW SPECIFICATION') : 'ABOVE SPECIFICATION';
     const tagBase = `measure.${m.id}`;
     const corner = slotId?.match(/^whl\.(\w\w)$/)?.[1];
     this.recordTest(corner ? `${tagBase}.${corner}` : tagBase, `${m.label}${slotId ? ` — ${SLOTS[slotId].name}` : ''}`, `${fmt(val, m.decimals)} ${m.unit}`, PARTS[p.def].system);
     if (corner) this.milestone(`${tagBase}.${corner}`);
+    this.milestone(tagBase.replace(/\d+$/, ''));
     this.addTime(0.7);
     sound('measure', 0.4);
-    bus.emit('ui:open', { panel: 'measure', arg: { label: m.label, value: `${fmt(val, m.decimals)} ${m.unit}`, spec: m.spec?.label ?? '—', verdict } });
+    bus.emit('ui:open', { panel: 'measure', arg: { label: m.label, value: `${fmt(val, m.decimals)} ${m.unit}`, spec: spec?.label ?? '—', verdict } });
   }
 
   setPlugGap(p: PartState, target: number) {
@@ -878,7 +897,9 @@ export class Game {
     if (this.v.slots[`ign.plug_${cyl}`].part) return notify('Remove the spark plug first.', 'warn');
     const r = evaluate(this.v, { ...elecInputsFrom(this.v), ignOn: true, starter: true });
     if (!r.solenoidEngaged || r.motorV < 6) return notify('The engine will not crank fast enough for a valid test.', 'warn');
-    const base = 152 + (h01(this.v.id + cyl) - 0.5) * 10;
+    const gasket = partIn(this.v, 'eng.head_gasket');
+    const blown = !gasket || gasket.flags.includes('damaged');
+    const base = (152 + (h01(this.v.id + cyl) - 0.5) * 10) * (blown && (cyl === 3 || cyl === 4) ? 0.45 : 1);
     this.recordTest('compression', `Compression, cylinder ${cyl}`, `${Math.round(base / 5) * 5} psi`, 'engine');
     sound('crank');
     this.addTime(2);
@@ -942,6 +963,88 @@ export class Game {
     return `volts.${a}.${b}`;
   }
 
+  // ───────────── Engine removal (Tier II) ─────────────
+  standWorld(): [number, number, number] { return [-2.4, 0.95, 3.8]; }
+  /** Structural bottom-end condition → the oil-pressure / knock model. */
+  updateBottomEnd() {
+    const c = Math.max(bearingClearance(this.v, 'main'), bearingClearance(this.v, 'rod'));
+    if (c > 5) return;
+    this.v.engine.bearingDamage = clamp((c - 0.107) / 0.12, 0, 1);
+  }
+  engineBlockers(): string[] {
+    const v = this.v, out: string[] = [];
+    if (!this.owns('engine_hoist')) out.push('You need an engine hoist (Tools)');
+    if (v.engine.running) out.push('Stop the engine');
+    if (!bonnetOpenFn(v)) out.push('Open the bonnet');
+    if (!isReleased(v, 'elec.term_neg') && v.slots['elec.term_neg'].part) out.push('Disconnect the battery earth terminal');
+    if (sumpOil(v) > 0.6) out.push('Drain the engine oil (it would pour out when the engine tilts)');
+    if (total(v.coolant.comp) > 1.0) out.push('Drain the coolant (radiator drain tap)');
+    for (const id of ENGINE_CONNECTIONS) if ((v.slots[id].vars.off ?? 0) < 0.5) out.push(`Still connected: ${SLOTS[id].name}`);
+    if (v.slots['eng.mount_bolts'].part && !threadReleased(v, 'eng.mount_bolts')) out.push('Undo the engine mounting bolts');
+    return out;
+  }
+  liftEngine() {
+    const v = this.v;
+    if ((v.engineLoc ?? 'car') !== 'car') return;
+    const b = this.engineBlockers();
+    if (b.length) {
+      sound('strain', 0.6);
+      notify(`The hoist takes the strain but the engine will not come free — ${b.length} thing(s) still holding it: ${b.slice(0, 3).join('; ')}${b.length > 3 ? '…' : ''}`, 'warn');
+      this.recordTest('engine.lift_attempt', 'Tried to lift the engine out', b.join('; '), 'engine');
+      return;
+    }
+    v.engineLoc = 'hoist'; this.addTime(50); sound('jack_pump'); this.milestone('engine_out');
+    notify('Engine and gearbox lifted clear of the car on the hoist.', 'good');
+    bus.emit('vehicle:changed', { reason: 'engine' });
+  }
+  mountOnStand() {
+    if (this.v.engineLoc !== 'hoist') return;
+    if (!this.owns('engine_stand')) return notify('Buy an engine stand first (Tools).', 'warn');
+    this.v.engineLoc = 'stand'; this.addTime(25); sound('metal_place'); this.milestone('engine_on_stand');
+    notify('Engine bolted to the stand — the bottom end is now accessible.', 'good');
+    bus.emit('vehicle:changed', { reason: 'engine' });
+  }
+  liftFromStand() {
+    if (this.v.engineLoc !== 'stand') return;
+    this.v.engineLoc = 'hoist'; this.addTime(20); sound('jack_pump');
+    bus.emit('vehicle:changed', { reason: 'engine' });
+  }
+  lowerEngine() {
+    if (this.v.engineLoc !== 'hoist') return;
+    this.v.engineLoc = 'car'; this.addTime(60); sound('thud'); this.milestone('engine_in');
+    notify('Engine lowered back onto its mountings. Now reconnect everything and tighten the mounts.', 'good');
+    bus.emit('vehicle:changed', { reason: 'engine' });
+  }
+  observeExhaust() {
+    const e = this.v.engine;
+    if (!e.running) return notify('Start the engine first.', 'info');
+    const obs = e.smoke.white > 0.3 ? 'Persistent white, sweet-smelling exhaust smoke even when warm' : e.smoke.black > 0.2 ? 'Black sooty smoke — rich mixture' : e.smoke.blue > 0.2 ? 'Blue-grey smoke — burning oil' : 'Clear exhaust';
+    this.recordTest('exhaust.smoke', 'Exhaust observed', obs, 'exhaust');
+    notify(obs + '.', 'info');
+  }
+  /** Machine shop: costs money and days. Only engine components are accepted. */
+  machineShop(uidItem: string, service: 'polish' | 'regrind') {
+    const p = this.state.inventory[uidItem];
+    if (!p || p.def !== 'crankshaft') return;
+    const price = service === 'polish' ? 85 : 260, days = service === 'polish' ? 1 : 3;
+    if (this.state.money < price) return notify('Not enough money.', 'bad');
+    if (service === 'regrind' && (p.vars.undersize ?? 0) >= 0.508) return notify('Already at the maximum regrind (0.020 in). The crankshaft must be replaced.', 'bad');
+    this.state.money -= price;
+    for (let n = 1; n <= 7; n++) {
+      const w = p.vars[`wear${n}`] ?? 0.003;
+      p.vars[`wear${n}`] = service === 'polish' ? Math.max(0.002, w - 0.008) : 0.002;
+    }
+    if (service === 'regrind') { p.vars.undersize = Math.round(((p.vars.undersize ?? 0) + 0.254) * 1000) / 1000; p.vars.pinWear = 0.002; }
+    else p.vars.pinWear = Math.max(0.002, (p.vars.pinWear ?? 0.003) - 0.008);
+    p.origin = 'refurb'; p.condition = Math.max(p.condition, 0.92); p.known.measured = {};
+    if (this.state.job) this.state.job.partsBilled.push({ def: 'crankshaft', price });
+    this.state.time += days * 86400;
+    this.milestone('machine_shop');
+    sound('till', 0.5);
+    notify(`Machine shop: crankshaft ${service === 'polish' ? 'polished' : 'reground 0.010 in undersize'} — £${price}, back after ${days} day(s).`, 'good');
+    bus.emit('inventory:changed', {}); bus.emit('money:changed', { money: this.state.money });
+  }
+
   // ───────────── Economy ─────────────
   buyPart(defId: string, qty = 1) {
     const d = PARTS[defId];
@@ -958,7 +1061,7 @@ export class Game {
   }
   toolAvailable(id: string): { ok: boolean; reason?: string } {
     const t = TOOLS[id];
-    if (t.phase && t.phase > 2) return { ok: false, reason: `Arrives with Phase ${t.phase}` };
+    if (t.phase && t.phase > BUILD_PHASE) return { ok: false, reason: `Arrives with Phase ${t.phase}` };
     if (t.unlock) {
       if ('rep' in t.unlock && this.state.progress.rep < t.unlock.rep) return { ok: false, reason: `Reputation ${t.unlock.rep} required` };
       if ('skill' in t.unlock && (this.state.progress.skills[t.unlock.skill] ?? 0) < t.unlock.level) return { ok: false, reason: `${t.unlock.skill} skill ${t.unlock.level} required` };
@@ -1012,6 +1115,7 @@ export class Game {
     // Latch hot run for the cooling job
     if (this.v.engine.running && this.v.engine.coolantC > 80) this.milestone('hot_run');
     if (this.v.engine.running) this.milestone('ran_after_service');
+    if (this.owns('engine_hoist')) this.milestone('owns_hoist');
     if (this.v.engine.running && this.v.engine.coolantC > 92) this.recordTestOnce('temp_gauge', 'Temperature gauge while idling', `${Math.round(this.v.engine.coolantC)} °C and rising`, 'cooling');
   }
   private recordTestOnce(tag: string, label: string, value: string, system: SystemId) { if (!this.hasMilestone(tag)) this.recordTest(tag, label, value, system); }

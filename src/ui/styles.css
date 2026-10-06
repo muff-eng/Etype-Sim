@@ -126,3 +126,4 @@ th { color: var(--accent); font-weight: 600; font-size: 12px; }
 .tree .leaf:hover { color: var(--accent); }
 .svgwrap svg { width: 100%; height: auto; background: #f2efe6; border-radius: 6px; }
 @media (max-width: 1100px) { #left { width: 260px; } #right { width: 280px; } }
+#tutorial { position: absolute; top: 48px; left: 50%; transform: translateX(-50%); width: min(480px, calc(100% - 700px)); min-width: 320px; padding: 10px 12px; z-index: 42; border-color: rgba(106,215,255,0.5); }

@@ -269,7 +269,7 @@ export class UI {
       h('option', { value: '' }, 'Spanner…'),
       ...TOOL_LIST.filter((t) => (t.kind === 'spanner' || t.kind === 'adjustable') && owned.has(t.id)).map((t) => h('option', { value: t.id, selected: g.grip.primary === t.id }, t.size ?? 'Adjustable')));
     const tw = g.toolKind() === 'torque_wrench';
-    const twInput = h('input', { type: 'number', min: '5', max: '110', step: '1', value: String(g.torqueSetting), style: 'width:56px', onchange: (e: Event) => { g.torqueSetting = Math.max(5, Math.min(110, +(e.target as HTMLInputElement).value || 5)); } });
+    const twInput = h('input', { type: 'number', min: '5', max: '150', step: '1', value: String(g.torqueSetting), style: 'width:56px', onchange: (e: Event) => { g.torqueSetting = Math.max(5, Math.min(150, +(e.target as HTMLInputElement).value || 5)); } });
     this.belt.append(
       h('div', { class: 'row' },
         h('span', { class: 'grip' }, '✋ ', grip),

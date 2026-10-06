@@ -41,7 +41,7 @@ const T: ToolDef[] = [
   // Drives
   { id: 'ratchet_38', name: '3/8 in drive ratchet', kind: 'ratchet', category: 'Sockets & drives', maxTorque: 140, turnRate: 160, price: 24, owned: true, desc: 'Reversible ratchet. Flick the direction lever (R) before you pull.' },
   { id: 'breaker_bar', name: '1/2 in drive breaker bar (with 3/8 adaptor)', kind: 'breaker_bar', category: 'Sockets & drives', maxTorque: 420, turnRate: 55, price: 30, desc: 'Long non-ratcheting bar for breaking tight or corroded fasteners loose. Never use it to tighten.' },
-  { id: 'torque_wrench', name: 'Click-type torque wrench 5–110 Nm', kind: 'torque_wrench', category: 'Sockets & drives', maxTorque: 110, turnRate: 70, price: 118, desc: 'Set the value, pull smoothly until it clicks — then STOP. Never use a torque wrench to undo fasteners.' },
+  { id: 'torque_wrench', name: 'Click-type torque wrench 5–150 Nm', kind: 'torque_wrench', category: 'Sockets & drives', maxTorque: 150, turnRate: 70, price: 118, desc: 'Set the value, pull smoothly until it clicks — then STOP. Never use a torque wrench to undo fasteners.' },
   { id: 'extension_150', name: '150 mm extension bar', kind: 'extension', category: 'Sockets & drives', price: 6, owned: true, desc: 'Needed to reach recessed fasteners such as the spark plugs between the camshaft covers.' },
   { id: 'uj_38', name: '3/8 in universal joint', kind: 'uj', category: 'Sockets & drives', price: 9, desc: 'Lets a socket work at an angle.' },
   { id: 'plug_socket', name: '13/16 in spark-plug socket (rubber insert)', kind: 'plug_socket', category: 'Sockets & drives', size: '13/16 AF', sizeMm: AF['13/16 AF'], price: 9, owned: true, desc: 'Deep socket with a rubber insert that grips the plug insulator.' },

@@ -16,7 +16,9 @@ export interface MeasurementDef {
   unit: string;
   decimals: number;
   spec?: { min?: number; max?: number; label: string; serviceLimit?: number };
-  read: (p: PartState) => number;
+  read: (p: PartState, v?: import('../sim/vehicle').VehicleState) => number;
+  /** Spec that depends on the instance (e.g. a reground crankshaft). */
+  specFn?: (p: PartState) => { min?: number; max?: number; label: string; serviceLimit?: number };
   where: 'installed' | 'removed' | 'any';
   phase?: number;
 }
@@ -193,13 +195,50 @@ definePart({
 });
 
 // ───────────────────────── Engine internals (Tier II groundwork) ─────────────────────────
+const UNDERSIZE: Record<number, string> = { 0: 'standard', 0.254: '0.010 in undersize', 0.508: '0.020 in undersize' };
+const usz = (p: PartState) => Math.round((p.vars.undersize ?? 0) * 1000) / 1000;
 definePart({
-  id: 'crankshaft', name: 'Crankshaft (7 main bearings)', system: 'engine', mass: 27, price: 950, kind: 'component', edu: 'crankshaft',
+  id: 'crankshaft', name: 'Crankshaft (7 main bearings)', system: 'engine', mass: 27, price: 950, kind: 'component', edu: 'crankshaft', catalog: true,
+  defaults: { undersize: 0 },
+  inspect: (p) => {
+    const w = Math.max(...[1, 2, 3, 4, 5, 6, 7].map((n) => p.vars[`wear${n}`] ?? 0.003));
+    return [w > 0.02 ? 'Main journals dull, with circumferential scoring you can catch with a fingernail.' : w > 0.008 ? 'Journals lightly marked.' : 'Journals mirror-bright.',
+      `Journal size stamp: ${UNDERSIZE[usz(p)] ?? 'unknown'}.`, 'Measure every journal with a micrometer in two planes before deciding.'];
+  },
   measurements: [1, 2, 3, 4, 5, 6, 7].map<MeasurementDef>((n) => ({
-    id: `main${n}`, label: `Main journal #${n}`, tools: ['micrometer'], unit: 'mm', decimals: 3, where: 'removed', phase: 3,
-    spec: { min: 69.85, max: 69.863, label: '69.850–69.863 mm', serviceLimit: 69.83 }, read: (p) => 69.863 - (p.vars[`wear${n}`] ?? 0.004),
+    id: `main${n}`, label: `Main journal #${n}`, tools: ['micrometer'], unit: 'mm', decimals: 3, where: 'removed',
+    spec: { min: 69.85, max: 69.863, label: '69.850–69.863 mm (standard)', serviceLimit: 69.83 },
+    specFn: (p) => { const u = usz(p); return { min: 69.85 - u, max: 69.863 - u, serviceLimit: 69.83 - u, label: `${(69.85 - u).toFixed(3)}–${(69.863 - u).toFixed(3)} mm (${UNDERSIZE[u] ?? 'undersize'})` }; },
+    read: (p) => 69.863 - (p.vars.undersize ?? 0) - (p.vars[`wear${n}`] ?? 0.003),
   })),
 });
+const bearingSet = (id: string, name: string, under: number, price: number, kind: 'main' | 'rod') => definePart({
+  id, name, system: 'engine', mass: 0.4, price, kind: 'consumable', catalog: true, edu: kind === 'main' ? 'crankshaft' : 'conrod',
+  defaults: { undersize: under, wear: 0 },
+  inspect: (p) => [(p.vars.wear ?? 0) > 0.03 ? 'Overlay worn through to the copper underlay; embedded debris and scoring.' : 'Even grey overlay, no scoring.', `Shells stamped: ${UNDERSIZE[under]}.`],
+  measurements: [{
+    id: 'clearance', label: kind === 'main' ? 'Main bearing running clearance' : 'Big-end running clearance', tools: ['plastigauge'], unit: 'mm', decimals: 3, where: 'installed',
+    spec: { min: 0.064, max: 0.107, label: '0.064–0.107 mm (0.0025–0.0042 in)' },
+    read: (_p, v) => (v ? bearingClearance(v, kind) : 0.08),
+  }],
+});
+bearingSet('main_bearings_std', 'Main bearing shell set — standard', 0, 85, 'main');
+bearingSet('main_bearings_010', 'Main bearing shell set — 0.010 in undersize', 0.254, 95, 'main');
+bearingSet('main_bearings_020', 'Main bearing shell set — 0.020 in undersize', 0.508, 95, 'main');
+bearingSet('rod_bearings_std', 'Big-end shell set — standard', 0, 64, 'rod');
+bearingSet('rod_bearings_010', 'Big-end shell set — 0.010 in undersize', 0.254, 70, 'rod');
+bearingSet('rod_bearings_020', 'Big-end shell set — 0.020 in undersize', 0.508, 70, 'rod');
+
+/** Running clearance from crank journal wear & size vs shell undersize & wear (negative = tight). */
+export function bearingClearance(v: import('../sim/vehicle').VehicleState, kind: 'main' | 'rod'): number {
+  const crankUid = v.slots['eng.crankshaft']?.part;
+  const bUid = v.slots[kind === 'main' ? 'eng.main_bearings' : 'eng.rod_bearings']?.part;
+  const crank = crankUid ? v.parts[crankUid] : null;
+  const b = bUid ? v.parts[bUid] : null;
+  if (!crank || !b) return 9;
+  const wear = kind === 'main' ? [1, 2, 3, 4, 5, 6, 7].reduce((a, n) => a + (crank.vars[`wear${n}`] ?? 0.003), 0) / 7 : (crank.vars.pinWear ?? 0.003);
+  return 0.072 + wear * 1.6 + (b.vars.wear ?? 0) + ((crank.vars.undersize ?? 0) - (b.vars.undersize ?? 0));
+}
 definePart({ id: 'piston', name: 'Piston 92.07 mm with rings', system: 'engine', mass: 0.7, price: 120, kind: 'component', edu: 'piston' });
 definePart({ id: 'conrod', name: 'Connecting rod', system: 'engine', mass: 1.0, price: 180, kind: 'component', edu: 'conrod' });
 

@@ -148,6 +148,20 @@ export function actionsFor(g: Game, slotId: string): Action[] {
       if (v.oil.oilOnEngine > 0) add({ id: 'wipe', label: 'Wipe spilt oil off the engine (rag)', enabled: kind === 'rag', reason: 'Select a rag', run: () => g.cleanEngineBay() });
       break;
   }
+  if (slotId === 'eng.block') {
+    const loc = v.engineLoc ?? 'car';
+    if (loc === 'car') {
+      const b = g.engineBlockers();
+      add({ id: 'lift', label: 'Hoist: lift engine & gearbox out', enabled: g.owns('engine_hoist'), reason: 'Buy an engine hoist (Tools)', run: () => g.liftEngine(), kind: 'primary' });
+      if (b.length && g.assist !== 'master') add({ id: 'blk', label: `${b.length} item(s) still holding the engine`, enabled: false, reason: b.slice(0, 4).join(' · '), kind: 'danger' });
+    }
+    if (loc === 'hoist') {
+      add({ id: 'stand', label: 'Mount engine on the engine stand', enabled: g.owns('engine_stand'), reason: 'Buy an engine stand (Tools)', run: () => g.mountOnStand(), kind: 'primary' });
+      add({ id: 'lower', label: 'Lower engine back into the car', enabled: true, run: () => g.lowerEngine() });
+    }
+    if (loc === 'stand') add({ id: 'unstand', label: 'Lift engine off the stand onto the hoist', enabled: g.owns('engine_hoist'), run: () => g.liftFromStand() });
+  }
+  if (slotId === 'exh.system') add({ id: 'smoke', label: 'Observe the exhaust (engine running)', enabled: v.engine.running, reason: 'Start the engine', run: () => g.observeExhaust() });
   if (slotId.startsWith('ign.plug_') && !p && g.owns('compression_tester')) add({ id: 'comp', label: 'Compression test this cylinder', enabled: reach.ok, run: () => g.compressionTest(+slotId.slice(-1)) });
   if (d.thread && p && s.turnsIn >= d.thread.turns - 0.05 && (g.assist === 'beginner')) {
     const vd = torqueVerdict(v, slotId);

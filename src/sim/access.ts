@@ -3,7 +3,7 @@ import { SLOTS, slotDef, type AccessReq } from '../data/slots';
 import type { VehicleState } from './vehicle';
 import { bonnetOpen, endOnStands, endRaised, isReleased, wheelOffGround } from './vehicle';
 
-export const BUILD_PHASE = 2; // phases implemented in this build (1: workshop/car, 2: Tier I systems)
+export const BUILD_PHASE = 3; // 1: workshop/car, 2: Tier I systems, 3: Tier II engine removal & bottom end
 
 export interface AccessResult {
   ok: boolean;
@@ -21,13 +21,15 @@ function stateOk(v: VehicleState, key: string): boolean {
     case 'bootFloorOpen': return sv('body.boot_floor') && sv('body.hatch');
     case 'engineOff': return !v.engine.running;
     case 'engineCold': return v.engine.coolantC < 50;
+    case 'engineOnStand': return v.engineLoc === 'stand';
+    case 'coolantLow': return Object.values(v.coolant.comp).reduce((a, b) => a + (b ?? 0), 0) < 1.0;
   }
   return false;
 }
 
 export function checkReq(v: VehicleState, r: AccessReq): { ok: boolean; reason?: string; unsafe?: string } {
   switch (r.type) {
-    case 'bonnetOpen': return bonnetOpen(v) ? { ok: true } : { ok: false, reason: 'Bonnet is closed' };
+    case 'bonnetOpen': return bonnetOpen(v) || v.engineLoc === 'stand' ? { ok: true } : { ok: false, reason: 'Bonnet is closed' };
     case 'under': {
       if (!endRaised(v, r.end, 0.2)) return { ok: false, reason: `Raise the ${r.end} of the car (≥ 200 mm) to get underneath` };
       if (!endOnStands(v, r.end)) return { ok: true, unsafe: `Working under the ${r.end} of the car supported only by a jack` };

@@ -56,6 +56,7 @@ export interface VehicleState {
   fuelL: number;
   engine: EngineRuntime;
   funnelIn: boolean;
+  engineLoc?: 'car' | 'hoist' | 'stand';
   floorSpill: number;
   odometer: number;
 }
@@ -93,6 +94,7 @@ export function createVehicle(): VehicleState {
       smoke: { blue: 0, white: 0, black: 0, steam: 0 }, sinceStop: 9999, ranSinceService: false, stallTimer: 0, throttle: 0, lastStartAttempt: 0,
     },
     funnelIn: false,
+    engineLoc: 'car',
     floorSpill: 0,
     odometer: 48210,
   };
@@ -161,6 +163,9 @@ export function threadReleased(v: VehicleState, slotId: string): boolean {
   if (!d.thread) return true;
   return s.turnsIn <= d.thread.turns - (d.thread.releaseTurns ?? 1);
 }
+
+export const connected = (v: VehicleState, id: string) => !!v.slots[id]?.part && (v.slots[id].vars.off ?? 0) < 0.5;
+export const engineInCar = (v: VehicleState) => (v.engineLoc ?? 'car') === 'car';
 
 export function bonnetOpen(v: VehicleState) { return (v.slots['body.bonnet'].vars.open ?? 0) > 0.95; }
 
