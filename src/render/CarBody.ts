@@ -140,9 +140,11 @@ export function buildBody(M: Mats, B: Binder): BodyParts {
   bonnetInner.add(box(0.36, 0.006, 0.36, M.underside, 1.82, 0.25, 0));
   // Headlamps, sidelamps
   for (const [sd, s] of [['R', 1], ['L', -1]] as const) {
-    const x = 1.96;
-    const t = bonnetLoft.tForZ(x, 0.44, s as 1 | -1);
+    const x = 1.9;
+    // Locate on the right wing, then mirror for the left so both lamps are symmetric
+    const t = bonnetLoft.tForZ(x, 0.55, 1);
     const { p, n } = bonnetLoft.at(x, t);
+    p.z = s * Math.abs(p.z); n.z = s * Math.abs(n.z);
     const up = n.clone().multiplyScalar(n.y < 0 ? -1 : 1);
     if (up.z * s < 0) up.z *= -1;
     const fwd = new THREE.Vector3(1, 0, 0).sub(up.clone().multiplyScalar(up.x)).normalize();
@@ -163,8 +165,9 @@ export function buildBody(M: Mats, B: Binder): BodyParts {
     bonnetInner.add(lamp);
     B.bind(`body.headlamp_${sd}`, lamp);
     // side lamp / indicator below headlamp
-    const t2 = bonnetLoft.tForZ(2.11, 0.34, s as 1 | -1, false);
+    const t2 = bonnetLoft.tForZ(2.11, 0.34, 1, false);
     const sp = bonnetLoft.at(2.11, t2);
+    sp.p.z = s * Math.abs(sp.p.z); sp.n.z = s * Math.abs(sp.n.z);
     const side = group(at(cyl(0.028, 0.03, M.amber, 'x', 20), 0, 0, 0), at(new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.004, 6, 24), M.chrome), 0.015, 0, 0, 0, Math.PI / 2, 0));
     side.position.copy(sp.p).add(sp.n.clone().multiplyScalar(0.005));
     bonnetInner.add(side);
