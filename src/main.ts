@@ -119,10 +119,11 @@ async function boot() {
   window.addEventListener('beforeunload', () => { try { localStorage.setItem('cte-workshop:autosave', JSON.stringify(game.state)); } catch { /* ignore */ } });
 
   showMenu(true);
-  document.title = `${BRANDING.fullName} Workshop`;
+  document.title = 'E-Type';
 
   let last = performance.now();
   let frames = 0;
+  let prevNow = performance.now();
   function frame(now: number) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
@@ -140,10 +141,12 @@ async function boot() {
     tutorial.el.style.visibility = inMenu ? 'hidden' : 'visible';
     audio.update();
     // Outlines: hover (amber) and selection (blue)
-    R.outline.selectedObjects = inter.hoverObject && !inMenu ? [inter.hoverObject] : [];
+    R.hover = inter.hoverObject && !inMenu ? [inter.hoverObject] : [];
     const sel = inter.selected?.kind === 'slot' ? car.bindings.get(inter.selected.id)?.objs ?? [] : [];
-    R.selectOutline.selectedObjects = sel.filter((o) => o.visible);
+    R.selection = sel.filter((o) => o.visible);
     R.render();
+    R.adapt(now - prevNow);
+    prevNow = now;
     frames++;
     requestAnimationFrame(frame);
   }

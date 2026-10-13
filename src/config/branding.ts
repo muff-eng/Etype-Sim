@@ -11,7 +11,7 @@ export const BRANDING = {
   modelYear: 1965,
   engineName: '4.2L JET Inline-Six',
   engineFamily: 'JET',
-  gameTitle: 'COUGAR TYPE E WORKSHOP',
+  gameTitle: 'E-TYPE',
   partPrefix: 'CTE',
   currency: '£',
 } as const;

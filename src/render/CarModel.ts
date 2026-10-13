@@ -15,6 +15,7 @@ import { CORNERS, type Corner } from '../sim/types';
 import { DROOP, partIn, sumpOil, OIL_MAX, COOLANT_FULL } from '../sim/vehicle';
 import { total } from '../data/fluids';
 import { clamp } from '../core/units';
+import { collectRefs, mergeStatic, trimShadowCasters } from './merge';
 
 interface Binding {
   slot: string;
@@ -72,6 +73,14 @@ export class CarModel implements Binder {
     this.root.add(clamp_);
     this.bind('body.spare_clamp', clamp_, { axis: new THREE.Vector3(0, 1, 0), pitch: 0.004, spin: true });
     for (const m of this.engine.clipMats) { (m as THREE.Material).clippingPlanes = []; }
+    // Merge rigid sub-meshes per animated container, then rebuild the pick list from what is left
+    const dyn = collectRefs([this.body, this.engine, this.chassis, this.wheels, this.spare]);
+    for (const b of this.bindings.values()) for (const o of b.objs) dyn.add(o);
+    dyn.add(clamp_);
+    mergeStatic(this.root, dyn);
+    trimShadowCasters(this.root);
+    this.pickables = [];
+    this.root.traverse((o) => { if ((o as THREE.Mesh).isMesh && o.userData.pick?.kind === 'slot') this.pickables.push(o); });
   }
 
   bind(slotId: string, obj: THREE.Object3D, opts: BindOpts = {}) {
@@ -167,6 +176,18 @@ export class CarModel implements Binder {
         const tgtCyl = s.vars.target ?? +slot.slice(-1);
         boot.position.x = -0.25 + (tgtCyl - 1) * 0.1;
       }
+    }
+    // Internals sealed inside the engine are skipped entirely (no draw calls, no shadow casting)
+    if (!(this.view.xray || this.view.cutaway || this.view.exploded)) {
+      const has = (id: string) => !!v.slots[id]?.part;
+      const sumpOn = has('eng.sump'), headOn = has('eng.head');
+      const hide = (ids: string[], sealed: boolean) => { if (sealed) for (const id of ids) this.bindings.get(id)?.objs.forEach((o) => (o.visible = false)); };
+      hide(['eng.oil_pump', 'eng.oil_pickup', 'eng.main_bolts', 'eng.main_bearings', 'eng.rod_bearings', 'eng.rod_nuts_1', 'eng.rod_nuts_2', 'eng.rod_nuts_3', 'eng.rod_nuts_4', 'eng.rod_nuts_5', 'eng.rod_nuts_6'], sumpOn);
+      hide(['eng.crankshaft'], sumpOn && has('trn.bellhousing'));
+      hide([1, 2, 3, 4, 5, 6].flatMap((c) => [`eng.piston_${c}`, `eng.conrod_${c}`]), sumpOn && headOn);
+      hide(['eng.camshaft_in', ...[1, 2, 3, 4, 5, 6].map((c) => `eng.valve_in_${c}`)], has('eng.cam_cover_in') && headOn);
+      hide(['eng.camshaft_ex', ...[1, 2, 3, 4, 5, 6].map((c) => `eng.valve_ex_${c}`)], has('eng.cam_cover_ex') && headOn);
+      hide(['eng.timing_chain'], has('eng.timing_cover'));
     }
     // Belt & alternator swing follow belt deflection
     const belt = partIn(v, 'eng.fan_belt');
@@ -266,6 +287,7 @@ export class CarModel implements Binder {
   }
 
   private applyXray(on: boolean) {
+    if (on === this.xrayMats.size > 0) return;
     const targets: THREE.Mesh[] = [...this.body.bodyMeshes];
     const engineShell = ['eng.block', 'eng.head', 'eng.sump', 'eng.cam_cover_in', 'eng.cam_cover_ex', 'eng.timing_cover', 'trn.bellhousing', 'trn.gearbox', 'fuel.air_box'];
     for (const s of engineShell) this.bindings.get(s)?.objs.forEach((o) => o.traverse((m) => { if ((m as THREE.Mesh).isMesh) targets.push(m as THREE.Mesh); }));

@@ -45,6 +45,7 @@ export class UI {
   modals!: Modals;
   private hover: PickTarget | null = null;
   private dirty = { left: true, right: true, belt: true };
+  private lastPanel = 0;
   private t = 0;
   showCockpit = false;
   private lastCrank = false;
@@ -100,9 +101,14 @@ export class UI {
     if (this.g.state.mode === 'menu') return;
     this.t += dt;
     if (this.t > 0.2) { this.t = 0; this.renderTop(); this.renderHuds(); if (this.hover) this.renderTooltip(); }
-    if (this.dirty.left) { this.dirty.left = false; this.renderLeft(); }
-    if (this.dirty.right) { this.dirty.right = false; this.renderRight(); }
-    if (this.dirty.belt) { this.dirty.belt = false; this.renderBelt(); }
+    // Panels rebuild at most ~8×/s so continuous actions (jacking, draining, pouring) don't thrash the DOM
+    const now = performance.now();
+    if (now - this.lastPanel > 120 && (this.dirty.left || this.dirty.right || this.dirty.belt)) {
+      this.lastPanel = now;
+      if (this.dirty.left) { this.dirty.left = false; this.renderLeft(); }
+      if (this.dirty.right) { this.dirty.right = false; this.renderRight(); }
+      if (this.dirty.belt) { this.dirty.belt = false; this.renderBelt(); }
+    }
     if (this.g.work.slot) this.renderWork();
     else this.work.style.display = 'none';
     const p = this.app.hoverPos();
@@ -134,7 +140,7 @@ export class UI {
         (this.stats.cut = btn('Cutaway', 'C', () => this.app.setView('cutaway', !this.app.view.cutaway))),
         (this.stats.exp = btn('Exploded', 'B', () => this.app.setView('exploded', !this.app.view.exploded))));
       this.top.append(
-        h('span', { class: 'brand' }, BRANDING.gameTitle.replace(' WORKSHOP', '')),
+        h('span', { class: 'brand' }, BRANDING.gameTitle),
         st('job', 'Current work order'), st('clock', 'Workshop clock'), st('money', 'Balance'), st('rep', 'Reputation'),
         h('span', { class: 'grow' }),
         camBtns, viewBtns, waitSel,

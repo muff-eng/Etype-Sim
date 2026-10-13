@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { box, cyl, at, group, tube, V } from './geom';
 import { TEX, type Mats } from './materials';
+import { mergeStatic } from './merge';
 
 export const ROOM = { x0: -6.5, x1: 7.0, z0: -5.2, z1: 5.2, h: 4.2 };
 
@@ -140,9 +141,10 @@ export function buildWorkshop(M: Mats): WorkshopParts {
   washer.position.set(2.4, 0, 4.6);
   root.add(washer);
   // Workshop sign
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.5), new THREE.MeshStandardMaterial({ map: TEX.text('COUGAR TYPE E SPECIALISTS', 1024, 160, 'bold 74px Georgia', '#e9e0c9', '#1d3a2c'), roughness: 0.6 }));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.5), new THREE.MeshStandardMaterial({ map: TEX.text('E-TYPE SPECIALISTS', 1024, 160, 'bold 74px Georgia', '#e9e0c9', '#1d3a2c'), roughness: 0.6 }));
   sign.position.set(0.5, 3.2, ROOM.z0 + 0.03);
   root.add(sign);
   root.traverse((o) => { if ((o as THREE.Mesh).isMesh && o !== floor) { o.castShadow = true; o.receiveShadow = true; } });
+  mergeStatic(root, new Set<THREE.Object3D>([floor, chest, computer, jobBoard, trayTable, bench, lift, hoist, engineStand, washer]));
   return { root, floor, toolChest: chest, computer, jobBoard, bench, lift, hoist, engineStand, washer, lights, trayTable };
 }

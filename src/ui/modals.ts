@@ -99,7 +99,7 @@ export class Modals {
     const auto = saves.find((s) => s.id === 'autosave');
     const t1done = JOBS.filter((j) => j.tier === 1 && g.state.progress.completed[j.id]).length;
     clear(this.menuEl).append(h('div', { class: 'inner' },
-      h('h1', null, BRANDING.gameTitle.replace(' WORKSHOP', '')), h('div', { style: 'font-family:Georgia,serif;letter-spacing:0.4em;color:#cfc6b0;margin:-2px 0 4px' }, 'W O R K S H O P'),
+      h('h1', null, BRANDING.gameTitle),
       h('div', { class: 'sub' }, `${BRANDING.variant} · ${BRANDING.engineName} · ${BRANDING.modelYear}`),
       auto ? h('button', { class: 'big primary', onclick: () => bus.emit('ui:open', { panel: 'continue' }) }, 'Continue', h('small', null, `Autosave — ${new Date(auto.savedAt).toLocaleString()}`)) : null,
       h('button', { class: 'big', onclick: () => this.jobBoard(1) }, 'Tier I — Maintenance', h('small', null, `A running car that needs servicing and fault-finding · ${t1done}/${JOBS.filter((j) => j.tier === 1).length} work orders complete`)),

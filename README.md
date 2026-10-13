@@ -1,4 +1,4 @@
-# Cougar Type E Workshop
+# E-Type
 
 A browser-based 3D mechanic and restoration simulator built around a 1965 **Series 1 4.2 Fixed Head Coupé**,
 called the **Cougar Type E** in-game, with its **4.2L JET Inline-Six**. You don't press a button to repair
